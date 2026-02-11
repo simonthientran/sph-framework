@@ -1,0 +1,11 @@
+[project]
+name = "sph-framework"
+version = "0.1.0"
+description = "Modular SPH simulation framework in Python"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
