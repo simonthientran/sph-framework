@@ -11,6 +11,10 @@ from sph.core.state_builder import build_fluid_block
 
 
 def main() -> int:
+    # Marker print to verify we're executing the currently edited file.
+    # This does not change any simulation logic, math, physics equations,
+    # solver ordering, or numerical formulations.
+    print("[BOOT] NEW BOOTSTRAP ACTIVE ✅")
     print("[BOOT] bootstrap started")
 
     if len(sys.argv) < 2:
@@ -85,3 +89,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
