@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from sph.sph.pressure import pressure_state_equation_linear, pressure_acceleration_symmetric
+
 from sph.core.state_builder import build_fluid_block
 from sph.neighbors.spatial_hash import SpatialHash
 from sph.sph.density import compute_density_summation
@@ -82,8 +84,28 @@ def main() -> int:
     print(f"        rel err min/avg/max: {rel_err.min():.3%} / {rel_err.mean():.3%} / {rel_err.max():.3%}")
     print("        note: density underestimation near free surfaces is expected.")
 
+     # -----------------------------
+    # Pressure (State Equation) + pressure acceleration
+    # -----------------------------
+    # State equation example from Section 4.4 (linear form)
+
+    k = float(scene["material"]["eos"].get("k", 2000.0))  # you can tune this later
+    rho0 = float(scene["material"]["rho0"])
+
+    state.p[:] = pressure_state_equation_linear(state.rho, rho0=rho0, k=k)
+
+    a_p = pressure_acceleration_symmetric(state=state, neighbor_search=search, h=h)
+
+    ap_norm = np.linalg.norm(a_p, axis=1)
+    print("[BOOT] pressure stats:")
+    print(f"        p min/avg/max: {state.p.min():.3f} / {state.p.mean():.3f} / {state.p.max():.3f}")
+    print("[BOOT] pressure accel stats:")
+    print(f"        |a_p| min/avg/max: {ap_norm.min():.3e} / {ap_norm.mean():.3e} / {ap_norm.max():.3e}")
+
     print("[BOOT] done")
     return 0
+
+   
 
 
 if __name__ == "__main__":
