@@ -6,9 +6,10 @@
     "dimensions": 2
   },
   "domain": {
-    "type": "box",
-    "min": [0.0, 0.0],
-    "max": [1.0, 0.6]
+  "type": "box",
+  "min": [0.0, 0.0],
+  "max": [1.0, 0.6],
+  "boundary_layers": 3
   },
   "fluid": {
     "type": "block",
@@ -17,23 +18,29 @@
     "spacing": 0.02,
     "initial_velocity": [0.0, 0.0]
   },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.04
+  },
+  "forces": {
+    "gravity": [0.0, -9.81]
+  },
   "material": {
     "rho0": 1000.0,
-    "viscosity": 0.01,
     "eos": {
-      "type": "tait",
-      "gamma": 7.0,
-      "c0": 20.0
+      "type": "linear",
+      "k": 500.0
+    },
+    "viscosity": {
+      "enable": false,
+      "nu": 0.0
     }
   },
   "time": {
     "mode": "cfl",
-    "dt_fixed": 0.0005,
     "cfl": 0.4,
-    "steps": 10
-  },
-  "neighbors": {
-    "type": "spatial_hash",
-    "support_radius": 0.04
+    "dt_min": 1e-05,
+    "dt_max": 0.0005,
+    "steps": 50
   }
 }
