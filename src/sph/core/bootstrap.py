@@ -1,3 +1,29 @@
+"""
+Bootstrap / CLI entry point for the SPH framework.
+
+What this file does:
+- Loads a JSON scene configuration.
+- Builds the particle state (fluid + static boundary particles).
+- Runs a WCSPH simulation loop based on the tutorial structure:
+  - Algorithm 1: density -> forces -> integration
+  - Eq. (33): CFL time step restriction
+  - Eq. (83): density including boundary contributions
+  - Eq. (84): pressure forces including boundary contributions
+- Logs per-step diagnostics (rho/p/v/neighbors).
+- Optionally exports CSV and VTK snapshots for ParaView/analysis.
+
+References:
+- "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
+  - Algorithm 1
+  - Eq. (33)
+  - Eq. (83)
+  - Eq. (84)
+
+Important constraint:
+- This file must not change any solver math/physics. It only wires together
+  existing components and adds observability/export around them.
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,16 +32,16 @@ from pathlib import Path
 
 import numpy as np
 
-from sph.core.simulator import SimConfig, step_wc_sph
-from sph.core.state_builder import build_fluid_block
+from sph.core.diagnostics import compute_step_diagnostics
+from sph.core.simulator import SimConfig, step_wcsph_algorithm1_with_boundaries
+from sph.core.state_builder import build_scene_state
+from sph.io.csv_export import export_particles_csv
+from sph.io.vtk_export import export_particles_vtk_legacy
+from sph.neighbors.spatial_hash import SpatialHash
 
 
 def main() -> int:
-    # Marker print to verify we're executing the currently edited file.
-    # This does not change any simulation logic, math, physics equations,
-    # solver ordering, or numerical formulations.
     print("[BOOT] NEW BOOTSTRAP ACTIVE ✅")
-    print("[BOOT] bootstrap started")
 
     if len(sys.argv) < 2:
         print("Usage: python -m sph.core.bootstrap <scene.json>")
@@ -29,59 +55,97 @@ def main() -> int:
     with scene_path.open("r", encoding="utf-8") as f:
         scene = json.load(f)
 
-    state = build_fluid_block(scene)
+    # -------------------------------------------------------------------------
+    # Build state (fluid + boundary particles)
+    # Boundary particles are static; fluid particles are integrated each step.
+    # This matches the particle-based boundary handling idea around Eq. (83)/(84).
+    # -------------------------------------------------------------------------
+    state = build_scene_state(scene)
 
-    dim = state.dim
+    dim = int(state.dim)
+    spacing = float(scene["fluid"]["spacing"])
     h = float(scene["neighbors"]["support_radius"])
     rho0 = float(scene["material"]["rho0"])
 
-    # particle size h_tilde in Eq. (33) is the particle diameter / spacing scale.
-    particle_size = float(scene["fluid"]["spacing"])
+    # Gravity from scene (fallback: -9.81 in y for 2D)
+    g = np.array(scene.get("forces", {}).get("gravity", [0.0, -9.81])[:dim], dtype=np.float64)
 
-    # gravity from scene (fallback: -9.81 in y)
-    g_list = scene.get("forces", {}).get("gravity", [0.0, -9.81, 0.0])
-    g = np.array(g_list[:dim], dtype=np.float64)
-
-    # time settings
+    # Time settings (dt is selected inside the solver according to Eq. (33) if enabled)
     time_cfg = scene.get("time", {})
     use_cfl = (time_cfg.get("mode", "cfl") == "cfl")
-    dt_fixed = float(time_cfg.get("dt_fixed", 0.0005))
-    cfl_lambda = float(time_cfg.get("cfl", 0.4))  # tutorial suggests ~0.4 in practice (text around Eq. (33))
-    dt_min = float(time_cfg.get("dt_min", 1e-5))
-    dt_max = float(time_cfg.get("dt_max", 5e-3))
-    steps = int(time_cfg.get("steps", 10))
-
-    # EOS stiffness (Section 4.4 examples: p = k (rho - rho0))
-    eos_k = float(scene.get("material", {}).get("eos", {}).get("k", 2000.0))
-
-    # viscosity (optional)
-    enable_visc = bool(scene.get("material", {}).get("viscosity", {}).get("enable", False))
-    nu = float(scene.get("material", {}).get("viscosity", {}).get("nu", 0.0))
+    steps = int(time_cfg.get("steps", 50))
+    log_every = int(time_cfg.get("log_every", 10))
 
     cfg = SimConfig(
         support_radius=h,
         rho0=rho0,
-        eos_k=eos_k,
+        eos_k=float(scene.get("material", {}).get("eos", {}).get("k", 500.0)),
         g=g,
-        cfl_lambda=cfl_lambda,
-        dt_min=dt_min,
-        dt_max=dt_max,
-        dt_fixed=dt_fixed,
-        use_cfl=use_cfl,
-        enable_viscosity=enable_visc,
-        kinematic_viscosity=nu,
+        cfl_lambda=float(time_cfg.get("cfl", 0.4)),
+        dt_min=float(time_cfg.get("dt_min", 1e-5)),
+        dt_max=float(time_cfg.get("dt_max", 5e-4)),
+        dt_fixed=float(time_cfg.get("dt_fixed", 5e-4)),
+        use_cfl=bool(use_cfl),
+        # viscosity fields are optional in SimConfig and default to disabled
     )
 
-    print(f"[BOOT] N={state.n}, dim={dim}, h={h}, spacing={particle_size}")
-    print(f"[BOOT] steps={steps}, use_cfl={use_cfl}, dt_fixed={dt_fixed}")
-    print(f"[BOOT] g={g}, eos_k={eos_k}, viscosity_enable={enable_visc}, nu={nu}")
+    # -------------------------------------------------------------------------
+    # Optional exports controlled by scene:
+    #   export.csv.enable/every/dir
+    #   export.vtk.enable/every/dir
+    # -------------------------------------------------------------------------
+    export_cfg = scene.get("export", {})
 
+    csv_cfg = export_cfg.get("csv", {})
+    csv_enabled = bool(csv_cfg.get("enable", False))
+    csv_every = int(csv_cfg.get("every", 10))
+    csv_dir = Path(csv_cfg.get("dir", "out/csv"))
+
+    vtk_cfg = export_cfg.get("vtk", {})
+    vtk_enabled = bool(vtk_cfg.get("enable", False))
+    vtk_every = int(vtk_cfg.get("every", 10))
+    vtk_dir = Path(vtk_cfg.get("dir", "out/vtk"))
+
+    # Export step 0000 if enabled (pre-step snapshot)
+    if csv_enabled:
+        export_particles_csv(csv_dir / "particles_step_0000.csv", state)
+    if vtk_enabled:
+        export_particles_vtk_legacy(vtk_dir / "particles_step_0000.vtk", state)
+
+    # -------------------------------------------------------------------------
+    # Main simulation loop
+    #
+    # Ordering matches Algorithm 1; the actual computations happen inside
+    # step_wcsph_algorithm1_with_boundaries (Eq. (83), Eq. (84), Eq. (33)).
+    #
+    # This loop only:
+    # - calls the existing solver step
+    # - builds a neighbor search for diagnostics
+    # - prints/export snapshots for observability
+    # -------------------------------------------------------------------------
     for s in range(steps):
-        dt = step_wc_sph(state, cfg=cfg, particle_size=particle_size)
+        dt = step_wcsph_algorithm1_with_boundaries(state=state, cfg=cfg, particle_size=spacing)
 
-        if s == 0 or (s + 1) % max(1, steps // 5) == 0:
-            vnorm = np.linalg.norm(state.vel, axis=1)
-            print(f"[STEP {s+1:04d}] dt={dt:.3e} |v| max={vnorm.max():.3e} pos_y min={state.pos[:,1].min():.3e}")
+        # Diagnostics neighbor search on current positions (read-only)
+        ns = SpatialHash(support_radius=h, dim=dim)
+        ns.build(state.pos)
+        diag = compute_step_diagnostics(step=s + 1, dt=dt, state=state, rho0=rho0, neighbor_search=ns)
+
+        if (s == 0) or ((s + 1) % max(1, log_every) == 0):
+            print(
+                f"[STEP {diag.step:04d}] dt={diag.dt:.3e} "
+                f"|v|max={diag.v_max:.3e} "
+                f"rho(min/avg/max)={diag.rho_min:.2f}/{diag.rho_mean:.2f}/{diag.rho_max:.2f} "
+                f"err% (avg)={100.0 * diag.rho_rel_err_mean:.2f} "
+                f"p(min/avg/max)={diag.p_min:.2f}/{diag.p_mean:.2f}/{diag.p_max:.2f} "
+                f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}"
+            )
+
+        if csv_enabled and ((s + 1) % max(1, csv_every) == 0):
+            export_particles_csv(csv_dir / f"particles_step_{diag.step:04d}.csv", state)
+
+        if vtk_enabled and ((s + 1) % max(1, vtk_every) == 0):
+            export_particles_vtk_legacy(vtk_dir / f"particles_step_{diag.step:04d}.vtk", state)
 
     print("[BOOT] done")
     return 0

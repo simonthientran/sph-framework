@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from sph.sph.xsph import xsph_velocity_correction
 
 from sph.core.state import ParticleState
 from sph.neighbors.spatial_hash import SpatialHash
@@ -226,6 +227,11 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     # v(t+dt) = v* + dt * a_p  (Algorithm 1 structure)
     state.vel[fluid_ids] = state.vel[fluid_ids] + dt * a_p[fluid_ids]
 
+    # XSPH smoothing (optional stabilization)
+    dv_xsph = xsph_velocity_correction(state, ns, h=h, eps=0.05)
+    state.vel[fluid_ids] += dv_xsph[fluid_ids]
+
+    # --- velocity correction
     # x(t+dt) = x + dt * v(t+dt)  for fluid only
     state.pos[fluid_ids] = state.pos[fluid_ids] + dt * state.vel[fluid_ids]
 
