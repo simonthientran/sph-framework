@@ -6,11 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from sph.sph.pressure import pressure_state_equation_linear, pressure_acceleration_symmetric
-
+from sph.core.simulator import SimConfig, step_wc_sph
 from sph.core.state_builder import build_fluid_block
-from sph.neighbors.spatial_hash import SpatialHash
-from sph.sph.density import compute_density_summation
 
 
 def main() -> int:
@@ -21,91 +18,69 @@ def main() -> int:
         return 2
 
     scene_path = Path(sys.argv[1]).resolve()
-    print(f"[BOOT] loading scene: {scene_path}")
-
     if not scene_path.exists():
         print("[ERROR] scene file not found")
         return 1
 
-    # -----------------------------
-    # Load scene
-    # -----------------------------
     with scene_path.open("r", encoding="utf-8") as f:
         scene = json.load(f)
 
-    print("[BOOT] scene loaded successfully")
-
-    # -----------------------------
-    # Build particle state
-    # -----------------------------
     state = build_fluid_block(scene)
 
-    print(f"[BOOT] particles: N={state.n}, dim={state.dim}")
-    print(f"[BOOT] pos min: {state.pos.min(axis=0)}")
-    print(f"[BOOT] pos max: {state.pos.max(axis=0)}")
-
-    # -----------------------------
-    # Neighbor search
-    # -----------------------------
+    dim = state.dim
     h = float(scene["neighbors"]["support_radius"])
-    search = SpatialHash(support_radius=h, dim=state.dim)
-    search.build(state.pos)
-
-    neighbor_counts = []
-
-    for i in range(state.n):
-        nbs = search.query(i, state.pos)
-        neighbor_counts.append(len(nbs))
-
-    neighbor_counts = np.array(neighbor_counts)
-
-    print("[BOOT] neighbor stats:")
-    print(f"        min: {neighbor_counts.min()}")
-    print(f"        avg: {neighbor_counts.mean():.2f}")
-    print(f"        max: {neighbor_counts.max()}")
-
-    # -----------------------------
-    # Density reconstruction
-    # -----------------------------
     rho0 = float(scene["material"]["rho0"])
 
-    rho = compute_density_summation(
-        state=state,
-        neighbor_search=search,
-        h=h
+    # particle size h_tilde in Eq. (33) is the particle diameter / spacing scale.
+    particle_size = float(scene["fluid"]["spacing"])
+
+    # gravity from scene (fallback: -9.81 in y)
+    g_list = scene.get("forces", {}).get("gravity", [0.0, -9.81, 0.0])
+    g = np.array(g_list[:dim], dtype=np.float64)
+
+    # time settings
+    time_cfg = scene.get("time", {})
+    use_cfl = (time_cfg.get("mode", "cfl") == "cfl")
+    dt_fixed = float(time_cfg.get("dt_fixed", 0.0005))
+    cfl_lambda = float(time_cfg.get("cfl", 0.4))  # tutorial suggests ~0.4 in practice (text around Eq. (33))
+    dt_min = float(time_cfg.get("dt_min", 1e-5))
+    dt_max = float(time_cfg.get("dt_max", 5e-3))
+    steps = int(time_cfg.get("steps", 10))
+
+    # EOS stiffness (Section 4.4 examples: p = k (rho - rho0))
+    eos_k = float(scene.get("material", {}).get("eos", {}).get("k", 2000.0))
+
+    # viscosity (optional)
+    enable_visc = bool(scene.get("material", {}).get("viscosity", {}).get("enable", False))
+    nu = float(scene.get("material", {}).get("viscosity", {}).get("nu", 0.0))
+
+    cfg = SimConfig(
+        support_radius=h,
+        rho0=rho0,
+        eos_k=eos_k,
+        g=g,
+        cfl_lambda=cfl_lambda,
+        dt_min=dt_min,
+        dt_max=dt_max,
+        dt_fixed=dt_fixed,
+        use_cfl=use_cfl,
+        enable_viscosity=enable_visc,
+        kinematic_viscosity=nu,
     )
 
-    state.rho[:] = rho
+    print(f"[BOOT] N={state.n}, dim={dim}, h={h}, spacing={particle_size}")
+    print(f"[BOOT] steps={steps}, use_cfl={use_cfl}, dt_fixed={dt_fixed}")
+    print(f"[BOOT] g={g}, eos_k={eos_k}, viscosity_enable={enable_visc}, nu={nu}")
 
-    rel_err = (rho - rho0) / rho0
+    for s in range(steps):
+        dt = step_wc_sph(state, cfg=cfg, particle_size=particle_size)
 
-    print("[BOOT] density stats:")
-    print(f"        rho min/avg/max: {rho.min():.3f} / {rho.mean():.3f} / {rho.max():.3f}")
-    print(f"        rel err min/avg/max: {rel_err.min():.3%} / {rel_err.mean():.3%} / {rel_err.max():.3%}")
-    print("        note: density underestimation near free surfaces is expected.")
-
-     # -----------------------------
-    # Pressure (State Equation) + pressure acceleration
-    # -----------------------------
-    # State equation example from Section 4.4 (linear form)
-
-    k = float(scene["material"]["eos"].get("k", 2000.0))  # you can tune this later
-    rho0 = float(scene["material"]["rho0"])
-
-    state.p[:] = pressure_state_equation_linear(state.rho, rho0=rho0, k=k)
-
-    a_p = pressure_acceleration_symmetric(state=state, neighbor_search=search, h=h)
-
-    ap_norm = np.linalg.norm(a_p, axis=1)
-    print("[BOOT] pressure stats:")
-    print(f"        p min/avg/max: {state.p.min():.3f} / {state.p.mean():.3f} / {state.p.max():.3f}")
-    print("[BOOT] pressure accel stats:")
-    print(f"        |a_p| min/avg/max: {ap_norm.min():.3e} / {ap_norm.mean():.3e} / {ap_norm.max():.3e}")
+        if s == 0 or (s + 1) % max(1, steps // 5) == 0:
+            vnorm = np.linalg.norm(state.vel, axis=1)
+            print(f"[STEP {s+1:04d}] dt={dt:.3e} |v| max={vnorm.max():.3e} pos_y min={state.pos[:,1].min():.3e}")
 
     print("[BOOT] done")
     return 0
-
-   
 
 
 if __name__ == "__main__":
