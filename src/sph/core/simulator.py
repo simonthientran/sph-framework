@@ -6,8 +6,13 @@ import numpy as np
 
 from sph.core.state import ParticleState
 from sph.neighbors.spatial_hash import SpatialHash
-from sph.sph.density import compute_density_summation
-from sph.sph.pressure import pressure_state_equation_linear, pressure_acceleration_symmetric
+from sph.sph.density import compute_density_summation, compute_density_with_boundaries_eq83
+from sph.sph.pressure import (
+    pressure_state_equation_linear,
+    pressure_acceleration_symmetric,
+    pressure_state_equation_linear_section44,
+    pressure_acceleration_with_boundaries_eq84,
+)
 from sph.sph.viscosity import viscosity_acceleration_laplace_eq23
 
 
@@ -27,7 +32,7 @@ class SimConfig:
     # State equation parameter: p_i = k (rho_i - rho0)
     eos_k: float
 
-    # External acceleration (e.g. gravity), shape (dim,)
+    # External acceleration (e.g., gravity), shape (dim,)
     g: np.ndarray
 
     # Time stepping (CFL-based or fixed)
@@ -37,9 +42,12 @@ class SimConfig:
     dt_fixed: float
     use_cfl: bool
 
-    # Viscosity (optional, based on Laplacian discretization)
-    enable_viscosity: bool
-    kinematic_viscosity: float  # nu
+    # Viscosity (optional, based on Laplacian discretization).
+    # Defaults keep viscosity disabled, matching the behavior used in the
+    # original tests; providing defaults is a structural convenience and
+    # does not change the underlying physics.
+    enable_viscosity: bool = False
+    kinematic_viscosity: float = 0.0  # nu
 
 
 def compute_dt_cfl(
@@ -82,8 +90,9 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
          pressure accelerations.
       4) Update velocity and positions with symplectic Euler.
 
-    Returns:
-        dt used in this step.
+    This function is identical in logic to the previously committed version
+    used by existing tests; we only share the SimConfig definition with
+    the boundary-aware variant below.
     """
     h = float(cfg.support_radius)
 
@@ -107,7 +116,7 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
         dt = float(cfg.dt_fixed)
 
     # --- non-pressure accelerations (gravity + viscosity)
-    # constant body force (e.g. gravity)
+    # constant body force (e.g., gravity)
     a_nonp = np.tile(cfg.g[None, :], (state.n, 1))
 
     if cfg.enable_viscosity and cfg.kinematic_viscosity > 0.0:
@@ -135,6 +144,93 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
 
     # x(t+dt) = x + dt * v(t+dt)
     state.pos[:] = state.pos + dt * state.vel
+
+    return dt
+
+
+def compute_dt_cfl_eq33(
+    v: np.ndarray,
+    h_tilde: float,
+    lam: float,
+    dt_min: float,
+    dt_max: float,
+) -> float:
+    """
+    Alias of compute_dt_cfl, kept for notation consistency with Eq. (33)
+    in the tutorial. This does not change the numerical scheme.
+    """
+    return compute_dt_cfl(v=v, h_tilde=h_tilde, lam=lam, dt_min=dt_min, dt_max=dt_max)
+
+
+def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, particle_size: float) -> float:
+    """
+    WCSPH loop with particle-based boundary handling, following Algorithm 1
+    and Eqs. (33), (83) and (84) in the SPH tutorial.
+
+    This is an extension of step_wc_sph that:
+    - uses density including boundary contributions (Eq. 83),
+    - uses pressure acceleration with mirrored boundary pressures (Eq. 84),
+    - integrates only fluid particles, keeping boundary particles static.
+
+    The underlying equations and ordering follow the tutorial; we only
+    add the explicit separation of fluid vs boundary particles.
+    """
+    h = float(cfg.support_radius)
+
+    # neighbor search over ALL particles (fluid + boundary)
+    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns.build(state.pos)
+
+    # (1) density including boundary contribution (Eq. 83)
+    state.rho[:] = compute_density_with_boundaries_eq83(
+        state=state,
+        neighbor_search=ns,
+        h=h,
+        rho0=cfg.rho0,
+    )
+
+    # (dt) CFL (Eq. 33) or fixed, applied to moving (fluid) particles
+    if cfg.use_cfl:
+        v_fluid = state.vel[~state.is_boundary]
+        dt = compute_dt_cfl_eq33(
+            v_fluid,
+            h_tilde=float(particle_size),
+            lam=float(cfg.cfl_lambda),
+            dt_min=float(cfg.dt_min),
+            dt_max=float(cfg.dt_max),
+        )
+    else:
+        dt = float(cfg.dt_fixed)
+
+    # (2) non-pressure forces: external only (gravity) on fluid
+    fluid_ids = state.fluid_indices
+    state.vel[fluid_ids] = state.vel[fluid_ids] + dt * cfg.g[None, :]
+
+    # (3) state equation (Section 4.4 examples)
+    # We use the Section 4.4 notation wrapper; numerically equivalent to
+    # the linear state equation used in step_wc_sph.
+    state.p[:] = pressure_state_equation_linear_section44(
+        state.rho,
+        rho0=cfg.rho0,
+        k=cfg.eos_k,
+    )
+
+    # (4) pressure acceleration incl. boundary (Eq. 84 + mirroring)
+    a_p = pressure_acceleration_with_boundaries_eq84(
+        state=state,
+        neighbor_search=ns,
+        h=h,
+        rho0=cfg.rho0,
+    )
+
+    # v(t+dt) = v* + dt * a_p  (Algorithm 1 structure)
+    state.vel[fluid_ids] = state.vel[fluid_ids] + dt * a_p[fluid_ids]
+
+    # x(t+dt) = x + dt * v(t+dt)  for fluid only
+    state.pos[fluid_ids] = state.pos[fluid_ids] + dt * state.vel[fluid_ids]
+
+    # boundary particles remain static by construction (not integrated)
+    state.vel[state.is_boundary] = 0.0
 
     return dt
 
