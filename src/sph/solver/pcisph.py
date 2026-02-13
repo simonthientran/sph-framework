@@ -304,6 +304,7 @@ def step_pcisph_with_boundaries(
     particle_size: float,
     max_iters: int,
     density_tol: float,
+    warm_start_pressure: bool = True,
     debug_fixed_dt: bool = False,
     debug: bool = False,
 ) -> float:
@@ -404,9 +405,52 @@ def step_pcisph_with_boundaries(
     max_iters = int(max_iters)
     density_tol = float(density_tol)
 
-    p = np.zeros((n,), dtype=np.float64)
+    # Pressure warm-start (initial guess) for the per-step PCISPH iteration.
+    #
+    # IMPORTANT: This does NOT change any PCISPH equations (Eq. 57/59/60, Eq. 53).
+    # It only changes the INITIAL GUESS for p in the iterative solve.
+    # The fixed point of the iteration is unchanged; convergence behavior can improve.
+    #
+    # - If warm_start_pressure=True (default): seed from current `state.p`.
+    # - If warm_start_pressure=False: start from zeros (legacy behavior).
+    #
+    # Boundary pressures remain fixed at 0 throughout (not iteratively updated).
     # Eq. (57): initial pressure prediction p_i = kPCI (rho0 - rho*_i)
-    p[fluid_ids] = float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids])
+    p_eq57 = np.zeros((n,), dtype=np.float64)
+    p_eq57[fluid_ids] = float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids])
+
+    if bool(warm_start_pressure):
+        # Warm-start from previous step pressure (initial guess).
+        #
+        # IMPORTANT: warm-starting changes ONLY the initialization of the iterative
+        # solve; it does NOT change Eq. (57)/(59)/(60) or Eq. (53), nor solver ordering.
+        #
+        # Practical safeguard: if CFL shrinks dt far below the scene's fixed dt,
+        # the previous step pressure can be a poor initial guess. Fall back to Eq. (57).
+        if float(dt) < 0.5 * float(cfg.dt_fixed):
+            p = p_eq57
+        else:
+            p = state.p.astype(np.float64, copy=True)
+            p[~np.isfinite(p)] = 0.0
+            p[state.is_boundary] = 0.0
+
+            # Keep Eq. (57) behavior for the first step / unset pressure.
+            if np.allclose(p[fluid_ids], 0.0):
+                p[fluid_ids] = p_eq57[fluid_ids]
+            else:
+                # Conservative warm-start:
+                # do NOT start with pressures larger (in magnitude) than the Eq. (57)
+                # prediction for the current rho*. This can reduce early local spikes
+                # without changing any equations (only the initial guess).
+                abs_prev = np.abs(p[fluid_ids])
+                abs_eq = np.abs(p_eq57[fluid_ids])
+                too_large = abs_prev > abs_eq
+                if np.any(too_large):
+                    p[fluid_ids[too_large]] = p_eq57[fluid_ids[too_large]]
+    else:
+        # Legacy behavior: start purely from Eq. (57) (equivalent to starting at 0 then applying Eq. 57).
+        p = p_eq57
+
     p[state.is_boundary] = 0.0
 
     rho_p = np.zeros((n,), dtype=np.float64)
