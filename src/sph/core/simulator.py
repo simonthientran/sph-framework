@@ -246,6 +246,7 @@ def step_simulation(
     cfg: SimConfig,
     particle_size: float,
     solver_cfg_dict: dict,
+    step_idx: int | None = None,
 ) -> float:
     """
     Dispatch simulation step based on scene solver configuration.
@@ -273,6 +274,8 @@ def step_simulation(
         warm_start_pressure = bool(solver_cfg_dict.get("warm_start_pressure", True))
         debug_fixed_dt = bool(solver_cfg_dict.get("debug_fixed_dt", False))
         debug = bool(solver_cfg_dict.get("debug", False))
+        debug_dump_on_step = solver_cfg_dict.get("debug_dump_on_step", None)
+        debug_dump_on_step = int(debug_dump_on_step) if debug_dump_on_step is not None else None
         return step_pcisph_with_boundaries(
             state=state,
             cfg=cfg,
@@ -282,6 +285,8 @@ def step_simulation(
             warm_start_pressure=warm_start_pressure,
             debug_fixed_dt=debug_fixed_dt,
             debug=debug,
+            debug_dump_on_step=debug_dump_on_step,
+            step_idx=step_idx,
         )
 
     raise ValueError(f"Unknown solver type: {solver_type!r}")

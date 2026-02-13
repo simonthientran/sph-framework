@@ -130,7 +130,13 @@ def main() -> int:
     # - prints/export snapshots for observability
     # -------------------------------------------------------------------------
     for s in range(steps):
-        dt = step_simulation(state=state, cfg=cfg, particle_size=spacing, solver_cfg_dict=solver_cfg)
+        dt = step_simulation(
+            state=state,
+            cfg=cfg,
+            particle_size=spacing,
+            solver_cfg_dict=solver_cfg,
+            step_idx=s + 1,
+        )
 
         # Diagnostics neighbor search on current positions (read-only)
         ns = SpatialHash(support_radius=h, dim=dim)
