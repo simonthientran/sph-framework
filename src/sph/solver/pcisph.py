@@ -311,6 +311,7 @@ def step_pcisph_with_boundaries(
     max_iters: int,
     density_tol: float,
     warm_start_pressure: bool = True,
+    clamp_negative_pressure: bool = True,
     debug_fixed_dt: bool = False,
     debug: bool = False,
     debug_dump_on_step: int | None = None,
@@ -473,6 +474,30 @@ def step_pcisph_with_boundaries(
 
     p[state.is_boundary] = 0.0
 
+    # -----------------------------------------------------------------------
+    # Negative-pressure clamping (post-initialization).
+    #
+    # What: set p_i = max(p_i, 0) for all fluid particles.
+    #
+    # Why: At free-surface / low-density particles, Eq. (51) can predict
+    #      rho*_i << rho0 (particle has few neighbors on one side). The
+    #      initial pressure from Eq. (57) then becomes strongly *negative*
+    #      (p = kPCI * (rho0 - rho*) with rho* < rho0 => p < 0 because
+    #      kPCI < 0). Large negative pressures create attractive (tensile)
+    #      forces via Eq. (53), pulling particles apart and causing blow-up.
+    #
+    # This is a standard practical stabilization in SPH literature:
+    #   "Simply clamping p >= 0 prevents tensile instability."
+    # The underlying equations (51/53/57/58/59/60) remain unchanged;
+    # we only discard unphysical negative-pressure contributions that the
+    # iterative solver cannot correct before they cause particle escape.
+    #
+    # Controlled by solver option "clamp_negative_pressure" (default true).
+    # Boundary pressures are always 0 and unaffected.
+    # -----------------------------------------------------------------------
+    if bool(clamp_negative_pressure):
+        p[fluid_ids] = np.maximum(p[fluid_ids], 0.0)
+
     rho_p = np.zeros((n,), dtype=np.float64)
 
     # Debug-only sanity metrics (read-only).
@@ -508,6 +533,14 @@ def step_pcisph_with_boundaries(
         p[fluid_ids] = p[fluid_ids] + float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids] - rho_p[fluid_ids])
         p[state.is_boundary] = 0.0
 
+        # Negative-pressure clamping (per-iteration).
+        # Same rationale as the post-initialization clamp above: discard
+        # unphysical negative (tensile) pressures produced by the iterative
+        # update. Equations 51/53/57/58/59/60 are unchanged; we only floor
+        # the pressure field to zero after the standard Eq. (59) update.
+        if bool(clamp_negative_pressure):
+            p[fluid_ids] = np.maximum(p[fluid_ids], 0.0)
+
         # avg_err = mean( abs((rho* + rho_p - rho0)/rho0) ) over fluid
         avg_err = float(np.mean(np.abs((rho_star[fluid_ids] + rho_p[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
         iters_used = it
@@ -540,6 +573,7 @@ def step_pcisph_with_boundaries(
         print(
             f"[PCISPH] step={step_idx} "
             f"dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
+            f"clamp_neg_p={bool(clamp_negative_pressure)} "
             f"kPCI={float(kPCI):.3e} "
             f"rho*_err_avg={float(debug_rho_star_err_avg):.3e} "
             f"iters_used={int(iters_used)}/{int(max_iters)} "

@@ -272,6 +272,7 @@ def step_simulation(
         max_iters = int(solver_cfg_dict.get("max_iters", 8))
         density_tol = float(solver_cfg_dict.get("density_tol", 0.01))
         warm_start_pressure = bool(solver_cfg_dict.get("warm_start_pressure", True))
+        clamp_negative_pressure = bool(solver_cfg_dict.get("clamp_negative_pressure", True))
         debug_fixed_dt = bool(solver_cfg_dict.get("debug_fixed_dt", False))
         debug = bool(solver_cfg_dict.get("debug", False))
         debug_dump_on_step = solver_cfg_dict.get("debug_dump_on_step", None)
@@ -283,6 +284,7 @@ def step_simulation(
             max_iters=max_iters,
             density_tol=density_tol,
             warm_start_pressure=warm_start_pressure,
+            clamp_negative_pressure=clamp_negative_pressure,
             debug_fixed_dt=debug_fixed_dt,
             debug=debug,
             debug_dump_on_step=debug_dump_on_step,
