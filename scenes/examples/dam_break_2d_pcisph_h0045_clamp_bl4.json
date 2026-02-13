@@ -1,47 +1,29 @@
 {
   "meta": {
-    "name": "dam_break_2d_pcisph_h0045",
+    "name": "dam_break_2d_pcisph_h0045_clamp_bl4",
     "version": 1,
     "seed": 0,
     "dimensions": 2
   },
   "domain": {
     "type": "box",
-    "min": [
-      0.0,
-      0.0
-    ],
-    "max": [
-      1.0,
-      0.6
-    ],
-    "boundary_layers": 3
+    "min": [0.0, 0.0],
+    "max": [1.0, 0.6],
+    "boundary_layers": 4
   },
   "fluid": {
     "type": "block",
-    "min": [
-      0.05,
-      0.05
-    ],
-    "max": [
-      0.35,
-      0.55
-    ],
+    "min": [0.05, 0.05],
+    "max": [0.35, 0.55],
     "spacing": 0.02,
-    "initial_velocity": [
-      0.0,
-      0.0
-    ]
+    "initial_velocity": [0.0, 0.0]
   },
   "neighbors": {
     "type": "spatial_hash",
     "support_radius": 0.045
   },
   "forces": {
-    "gravity": [
-      0.0,
-      -9.81
-    ]
+    "gravity": [0.0, -9.81]
   },
   "material": {
     "rho0": 1000.0,
@@ -67,6 +49,7 @@
     "type": "pcisph",
     "max_iters": 12,
     "density_tol": 0.005,
+    "clamp_negative_pressure": true,
     "debug": true,
     "debug_dump_on_step": 50
   },
@@ -83,3 +66,4 @@
     }
   }
 }
+

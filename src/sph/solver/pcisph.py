@@ -84,6 +84,7 @@ def _compute_kpci_eq58(
     h: float,
     rho0: float,
     dt: float,
+    debug: bool = False,
 ) -> float:
     """
     Compute global stiffness constant kPCI using Eq. (58).
@@ -108,11 +109,16 @@ def _compute_kpci_eq58(
         S += gradW
         Q += float(np.dot(gradW, gradW))
 
-    denom = float(np.dot(S, S) + Q)
+    denom_raw = float(np.dot(S, S) + Q)
+    if bool(debug):
+        if not np.isfinite(denom_raw) or denom_raw <= 0.0:
+            print(f"[PCISPH][WARN] kPCI denom invalid: denom={denom_raw!r} (template i={int(i_template)})")
+        elif denom_raw < 1e-9:
+            print(f"[PCISPH][WARN] kPCI denom tiny: denom={denom_raw:.3e} (template i={int(i_template)})")
 
     # Numeric guard only: avoid division by ~0 if a particle has no neighbors.
     # This does not change intended physics; it prevents a crash in degenerate cases.
-    denom = max(denom, 1e-12)
+    denom = max(denom_raw, 1e-12)
 
     mi = float(state.mass[i_template])
     rho0 = float(rho0)
@@ -304,8 +310,12 @@ def step_pcisph_with_boundaries(
     particle_size: float,
     max_iters: int,
     density_tol: float,
+    warm_start_pressure: bool = True,
+    clamp_negative_pressure: bool = True,
     debug_fixed_dt: bool = False,
     debug: bool = False,
+    debug_dump_on_step: int | None = None,
+    step_idx: int | None = None,
 ) -> float:
     """
     Perform one PCISPH step with static boundary particles.
@@ -369,6 +379,10 @@ def step_pcisph_with_boundaries(
         a_nonp=a_nonp,
         rho0=cfg.rho0,
     )
+    if bool(debug):
+        if not np.all(np.isfinite(rho_star[fluid_ids])):
+            bad = np.where(~np.isfinite(rho_star[fluid_ids]))[0]
+            print(f"[PCISPH][WARN] non-finite rho* for {bad.size} fluid particles (step={step_idx})")
 
     # (6) Global stiffness kPCI via Eq. (58) (template particle)
     if fluid_ids.size == 0:
@@ -397,17 +411,92 @@ def step_pcisph_with_boundaries(
     if cache_key in _KPCI_CACHE:
         kPCI = _KPCI_CACHE[cache_key]
     else:
-        kPCI = _compute_kpci_eq58(i_template=i_template, state=state, ns=ns, h=h, rho0=cfg.rho0, dt=dt_kpci)
+        kPCI = _compute_kpci_eq58(
+            i_template=i_template,
+            state=state,
+            ns=ns,
+            h=h,
+            rho0=cfg.rho0,
+            dt=dt_kpci,
+            debug=bool(debug),
+        )
         _KPCI_CACHE[cache_key] = float(kPCI)
 
     # (7) Pressure iterations: Eq. (57), (59), (60) with Eq. (53)
     max_iters = int(max_iters)
     density_tol = float(density_tol)
 
-    p = np.zeros((n,), dtype=np.float64)
+    # Pressure warm-start (initial guess) for the per-step PCISPH iteration.
+    #
+    # IMPORTANT: This does NOT change any PCISPH equations (Eq. 57/59/60, Eq. 53).
+    # It only changes the INITIAL GUESS for p in the iterative solve.
+    # The fixed point of the iteration is unchanged; convergence behavior can improve.
+    #
+    # - If warm_start_pressure=True (default): seed from current `state.p`.
+    # - If warm_start_pressure=False: start from zeros (legacy behavior).
+    #
+    # Boundary pressures remain fixed at 0 throughout (not iteratively updated).
     # Eq. (57): initial pressure prediction p_i = kPCI (rho0 - rho*_i)
-    p[fluid_ids] = float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids])
+    p_eq57 = np.zeros((n,), dtype=np.float64)
+    p_eq57[fluid_ids] = float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids])
+
+    if bool(warm_start_pressure):
+        # Warm-start from previous step pressure (initial guess).
+        #
+        # IMPORTANT: warm-starting changes ONLY the initialization of the iterative
+        # solve; it does NOT change Eq. (57)/(59)/(60) or Eq. (53), nor solver ordering.
+        #
+        # Practical safeguard: if CFL shrinks dt far below the scene's fixed dt,
+        # the previous step pressure can be a poor initial guess. Fall back to Eq. (57).
+        if float(dt) < 0.5 * float(cfg.dt_fixed):
+            p = p_eq57
+        else:
+            p = state.p.astype(np.float64, copy=True)
+            p[~np.isfinite(p)] = 0.0
+            p[state.is_boundary] = 0.0
+
+            # Keep Eq. (57) behavior for the first step / unset pressure.
+            if np.allclose(p[fluid_ids], 0.0):
+                p[fluid_ids] = p_eq57[fluid_ids]
+            else:
+                # Conservative warm-start:
+                # do NOT start with pressures larger (in magnitude) than the Eq. (57)
+                # prediction for the current rho*. This can reduce early local spikes
+                # without changing any equations (only the initial guess).
+                abs_prev = np.abs(p[fluid_ids])
+                abs_eq = np.abs(p_eq57[fluid_ids])
+                too_large = abs_prev > abs_eq
+                if np.any(too_large):
+                    p[fluid_ids[too_large]] = p_eq57[fluid_ids[too_large]]
+    else:
+        # Legacy behavior: start purely from Eq. (57) (equivalent to starting at 0 then applying Eq. 57).
+        p = p_eq57
+
     p[state.is_boundary] = 0.0
+
+    # -----------------------------------------------------------------------
+    # Negative-pressure clamping (post-initialization).
+    #
+    # What: set p_i = max(p_i, 0) for all fluid particles.
+    #
+    # Why: At free-surface / low-density particles, Eq. (51) can predict
+    #      rho*_i << rho0 (particle has few neighbors on one side). The
+    #      initial pressure from Eq. (57) then becomes strongly *negative*
+    #      (p = kPCI * (rho0 - rho*) with rho* < rho0 => p < 0 because
+    #      kPCI < 0). Large negative pressures create attractive (tensile)
+    #      forces via Eq. (53), pulling particles apart and causing blow-up.
+    #
+    # This is a standard practical stabilization in SPH literature:
+    #   "Simply clamping p >= 0 prevents tensile instability."
+    # The underlying equations (51/53/57/58/59/60) remain unchanged;
+    # we only discard unphysical negative-pressure contributions that the
+    # iterative solver cannot correct before they cause particle escape.
+    #
+    # Controlled by solver option "clamp_negative_pressure" (default true).
+    # Boundary pressures are always 0 and unaffected.
+    # -----------------------------------------------------------------------
+    if bool(clamp_negative_pressure):
+        p[fluid_ids] = np.maximum(p[fluid_ids], 0.0)
 
     rho_p = np.zeros((n,), dtype=np.float64)
 
@@ -418,6 +507,13 @@ def step_pcisph_with_boundaries(
     if bool(debug):
         debug_neigh_counts = np.array([len(ns.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
         debug_rho_star_err_avg = float(np.mean(np.abs((rho_star[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
+        zeros = np.count_nonzero(debug_neigh_counts == 0)
+        if zeros > 0:
+            # Show a few indices to help diagnose local sampling/escape.
+            zero_ids = fluid_ids[np.where(debug_neigh_counts == 0)[0]]
+            show = ", ".join(str(int(i)) for i in zero_ids[:10])
+            more = "" if zero_ids.size <= 10 else f" ... (+{int(zero_ids.size - 10)})"
+            print(f"[PCISPH][WARN] {int(zeros)} fluid particles have 0 neighbors at step={step_idx}: {show}{more}")
 
     iters_used = 0
     avg_err_final = float("nan")
@@ -427,10 +523,23 @@ def step_pcisph_with_boundaries(
         # strongly from rho0 during iterations (common PCISPH pitfall: "wrong rho in Eq. (53)").
         a_p = _pressure_accel_eq53(state=state, ns=ns, h=h, p=p, rho=rho_star, rho0_for_denoms=cfg.rho0)
         rho_p = _rho_p_eq60(state=state, ns=ns, h=h, dt=dt, a_p=a_p)
+        if bool(debug):
+            if not np.all(np.isfinite(a_p[fluid_ids])):
+                print(f"[PCISPH][WARN] non-finite a_p detected (step={step_idx}, iter={it})")
+            if not np.all(np.isfinite(rho_p[fluid_ids])):
+                print(f"[PCISPH][WARN] non-finite rho_p detected (step={step_idx}, iter={it})")
 
         # Eq. (59): p^(l+1) = p^(l) + kPCI ( rho0 - rho* - rho_p^(l) )
         p[fluid_ids] = p[fluid_ids] + float(kPCI) * (float(cfg.rho0) - rho_star[fluid_ids] - rho_p[fluid_ids])
         p[state.is_boundary] = 0.0
+
+        # Negative-pressure clamping (per-iteration).
+        # Same rationale as the post-initialization clamp above: discard
+        # unphysical negative (tensile) pressures produced by the iterative
+        # update. Equations 51/53/57/58/59/60 are unchanged; we only floor
+        # the pressure field to zero after the standard Eq. (59) update.
+        if bool(clamp_negative_pressure):
+            p[fluid_ids] = np.maximum(p[fluid_ids], 0.0)
 
         # avg_err = mean( abs((rho* + rho_p - rho0)/rho0) ) over fluid
         avg_err = float(np.mean(np.abs((rho_star[fluid_ids] + rho_p[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
@@ -443,14 +552,61 @@ def step_pcisph_with_boundaries(
             # Should not happen, but keep debug robust.
             debug_neigh_counts = np.zeros((1,), dtype=np.int64)
             debug_rho_star_err_avg = float("nan")
+
+        # Error distribution after iterations (fluid only)
+        err_vec = np.abs((rho_star[fluid_ids] + rho_p[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))
+        max_err_after_iter = float(np.max(err_vec)) if err_vec.size else float("nan")
+
+        # Pressure stats after iterations (fluid only)
+        p_fluid = p[fluid_ids]
+        if p_fluid.size:
+            p_min = float(np.min(p_fluid))
+            p_mean = float(np.mean(p_fluid))
+            p_max = float(np.max(p_fluid))
+        else:
+            p_min = p_mean = p_max = float("nan")
+
+        # NaN/inf guards on key arrays (fluid)
+        if not np.all(np.isfinite(p_fluid)):
+            print(f"[PCISPH][WARN] non-finite p detected (step={step_idx})")
+
         print(
-            f"[PCISPH] dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
+            f"[PCISPH] step={step_idx} "
+            f"dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
+            f"clamp_neg_p={bool(clamp_negative_pressure)} "
             f"kPCI={float(kPCI):.3e} "
             f"rho*_err_avg={float(debug_rho_star_err_avg):.3e} "
             f"iters_used={int(iters_used)}/{int(max_iters)} "
-            f"avg_err_final={float(avg_err_final):.3e} "
+            f"avg_err_after_iter={float(avg_err_final):.3e} "
+            f"max_err_after_iter={float(max_err_after_iter):.3e} "
+            f"p(min/mean/max)={p_min:.3e}/{p_mean:.3e}/{p_max:.3e} "
             f"neigh(min/mean/max)={int(debug_neigh_counts.min())}/{float(debug_neigh_counts.mean()):.1f}/{int(debug_neigh_counts.max())}"
         )
+
+        # Optional targeted dump for a specific step (local sampling diagnosis)
+        if debug_dump_on_step is not None and step_idx == int(debug_dump_on_step):
+            # Worst 10 fluid particles by post-iteration abs relative density error
+            order = np.argsort(-err_vec)  # descending
+            worst_k = min(10, int(order.size))
+            worst_local = order[:worst_k]
+            worst_global = fluid_ids[worst_local]
+            worst_list = ", ".join(str(int(i)) for i in worst_global)
+            print(f"[PCISPH][DUMP] step={step_idx} worst10_by_density_err: {worst_list}")
+
+            if worst_k > 0:
+                wi = int(worst_global[0])
+                # neighbor count from debug_neigh_counts (aligned to fluid_ids)
+                wi_local = int(np.where(fluid_ids == wi)[0][0])
+                wi_neigh = int(debug_neigh_counts[wi_local])
+                wi_rho_star = float(rho_star[wi])
+                wi_rho_p = float(rho_p[wi])
+                wi_p = float(p[wi])
+                wi_v = float(np.linalg.norm(v_star[wi]))
+                print(
+                    f"[PCISPH][DUMP] worst i={wi} neigh={wi_neigh} "
+                    f"rho*={wi_rho_star:.3e} rho_p={wi_rho_p:.3e} "
+                    f"p={wi_p:.3e} |v|={wi_v:.3e} err={float(err_vec[worst_local[0]]):.3e}"
+                )
 
     # (8) Final velocity + position update with final pressure acceleration (Eq. (53))
     rho_final = np.full((n,), float(cfg.rho0), dtype=np.float64)
