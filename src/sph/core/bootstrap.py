@@ -4,20 +4,20 @@ Bootstrap / CLI entry point for the SPH framework.
 What this file does:
 - Loads a JSON scene configuration.
 - Builds the particle state (fluid + static boundary particles).
-- Runs a WCSPH simulation loop based on the tutorial structure:
-  - Algorithm 1: density -> forces -> integration
-  - Eq. (33): CFL time step restriction
-  - Eq. (83): density including boundary contributions
-  - Eq. (84): pressure forces including boundary contributions
+- Runs a selectable SPH solver loop:
+  - WCSPH baseline (Algorithm 1 style) OR
+  - PCISPH (Predictive–Corrective Incompressible SPH) using the equations below.
 - Logs per-step diagnostics (rho/p/v/neighbors).
 - Optionally exports CSV and VTK snapshots for ParaView/analysis.
 
 References:
 - "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
-  - Algorithm 1
-  - Eq. (33)
-  - Eq. (83)
-  - Eq. (84)
+  - Algorithm 1: baseline loop structure (density -> forces -> integrate)
+  - Eq. (33): CFL time step restriction (dt selected inside solver step)
+  - Eq. (83): density including boundary contributions (boundary-aware density)
+  - Eq. (84): pressure forces including boundary contributions (boundary-aware pressure)
+  - PCISPH section:
+    - Eq. (51), (53), (57), (58), (59), (60) (implemented in sph/solver/pcisph.py)
 
 Important constraint:
 - This file must not change any solver math/physics. It only wires together
@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from sph.core.diagnostics import compute_step_diagnostics
-from sph.core.simulator import SimConfig, step_wcsph_algorithm1_with_boundaries
+from sph.core.simulator import SimConfig, step_simulation
 from sph.core.state_builder import build_scene_state
 from sph.io.csv_export import export_particles_csv
 from sph.io.vtk_export import export_particles_vtk_legacy
@@ -54,6 +54,10 @@ def main() -> int:
 
     with scene_path.open("r", encoding="utf-8") as f:
         scene = json.load(f)
+
+    solver_cfg = scene.get("solver", {"type": "wcsph"})
+    solver_type = str(solver_cfg.get("type", "wcsph")).lower()
+    print(f"[BOOT] solver={solver_type}")
 
     # -------------------------------------------------------------------------
     # Build state (fluid + boundary particles)
@@ -115,16 +119,17 @@ def main() -> int:
     # -------------------------------------------------------------------------
     # Main simulation loop
     #
-    # Ordering matches Algorithm 1; the actual computations happen inside
-    # step_wcsph_algorithm1_with_boundaries (Eq. (83), Eq. (84), Eq. (33)).
+    # Ordering matches the selected solver:
+    # - WCSPH uses Algorithm 1 structure and boundary handling via Eq. (83)/(84).
+    # - PCISPH uses Eq. (51),(53),(57),(58),(59),(60) (see sph/solver/pcisph.py).
     #
     # This loop only:
-    # - calls the existing solver step
+    # - dispatches to the existing solver step
     # - builds a neighbor search for diagnostics
     # - prints/export snapshots for observability
     # -------------------------------------------------------------------------
     for s in range(steps):
-        dt = step_wcsph_algorithm1_with_boundaries(state=state, cfg=cfg, particle_size=spacing)
+        dt = step_simulation(state=state, cfg=cfg, particle_size=spacing, solver_cfg_dict=solver_cfg)
 
         # Diagnostics neighbor search on current positions (read-only)
         ns = SpatialHash(support_radius=h, dim=dim)

@@ -241,3 +241,46 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     return dt
 
 
+def step_simulation(
+    state: ParticleState,
+    cfg: SimConfig,
+    particle_size: float,
+    solver_cfg_dict: dict,
+) -> float:
+    """
+    Dispatch simulation step based on scene solver configuration.
+
+    This function exists purely for execution wiring / architecture:
+    - It does not change any solver math or ordering.
+    - It calls into the existing WCSPH step (default) or the new PCISPH step.
+
+    Supported scene config:
+      "solver": { "type": "wcsph" }  (default)
+      "solver": { "type": "pcisph", "max_iters": 8, "density_tol": 0.01 }
+    """
+    solver_cfg_dict = solver_cfg_dict or {"type": "wcsph"}
+    solver_type = str(solver_cfg_dict.get("type", "wcsph")).lower()
+
+    if solver_type == "wcsph":
+        return step_wcsph_algorithm1_with_boundaries(state=state, cfg=cfg, particle_size=particle_size)
+
+    if solver_type == "pcisph":
+        # Lazy import avoids circular imports and keeps WCSPH unaffected.
+        from sph.solver.pcisph import step_pcisph_with_boundaries
+
+        max_iters = int(solver_cfg_dict.get("max_iters", 8))
+        density_tol = float(solver_cfg_dict.get("density_tol", 0.01))
+        debug_fixed_dt = bool(solver_cfg_dict.get("debug_fixed_dt", False))
+        debug = bool(solver_cfg_dict.get("debug", False))
+        return step_pcisph_with_boundaries(
+            state=state,
+            cfg=cfg,
+            particle_size=particle_size,
+            max_iters=max_iters,
+            density_tol=density_tol,
+            debug_fixed_dt=debug_fixed_dt,
+            debug=debug,
+        )
+
+    raise ValueError(f"Unknown solver type: {solver_type!r}")
+
