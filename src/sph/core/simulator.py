@@ -50,6 +50,85 @@ class SimConfig:
     enable_viscosity: bool = False
     kinematic_viscosity: float = 0.0  # nu
 
+    # Domain boundary constraints (axis-aligned bounding box)
+    # If domain_min/max are provided, fluid particles are clamped to this box
+    # with velocity reflection (restitution) and friction.
+    domain_min: np.ndarray | None = None
+    domain_max: np.ndarray | None = None
+    boundary_restitution: float = 0.0
+    boundary_friction: float = 0.05
+
+
+def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig) -> None:
+    """
+    Enforce axis-aligned bounding box constraints on FLUID particles.
+    """
+    if cfg.domain_min is None or cfg.domain_max is None:
+        return
+
+    fluid_ids = state.fluid_indices
+    # If no fluid particles, nothing to do
+    if fluid_ids.size == 0:
+        return
+
+    pos = state.pos
+    vel = state.vel
+    
+    dmin = cfg.domain_min
+    dmax = cfg.domain_max
+    restitution = float(cfg.boundary_restitution)
+    friction = float(cfg.boundary_friction)
+    
+    # We iterate per dimension. Vectorized over fluid particles.
+    # dim is inferred from dmin/dmax shape.
+    dim = state.dim
+    
+    for d in range(dim):
+        # Lower bound
+        mask_lo = pos[fluid_ids, d] < dmin[d]
+        if np.any(mask_lo):
+            # Indices of fluid particles violating lower bound
+            idx_lo = fluid_ids[mask_lo]
+            
+            # Clamp position
+            pos[idx_lo, d] = dmin[d]
+            
+            # Reflect velocity: v_n = -restitution * v_n (if v_n < 0)
+            # v_n is vel[idx_lo, d]. It should be < 0 if penetrating.
+            # We only reflect if moving OUT (v < 0). If v > 0, they are already returning.
+            # But position clamp might put them exactly on boundary.
+            
+            v_n = vel[idx_lo, d]
+            penetrating = v_n < 0.0
+            
+            # Reflect normal component
+            vel[idx_lo[penetrating], d] = -restitution * v_n[penetrating]
+            
+            # Apply friction to tangential components
+            # v_t = v - v_n * n. Here n is axis aligned. Tangent is just other dims.
+            # Simple scaling of other components: v_t_new = v_t * (1 - friction)
+            if friction > 0.0:
+                for other_d in range(dim):
+                    if other_d != d:
+                        vel[idx_lo[penetrating], other_d] *= (1.0 - friction)
+
+        # Upper bound
+        mask_hi = pos[fluid_ids, d] > dmax[d]
+        if np.any(mask_hi):
+            idx_hi = fluid_ids[mask_hi]
+            
+            pos[idx_hi, d] = dmax[d]
+            
+            v_n = vel[idx_hi, d]
+            penetrating = v_n > 0.0
+            
+            vel[idx_hi[penetrating], d] = -restitution * v_n[penetrating]
+            
+            if friction > 0.0:
+                for other_d in range(dim):
+                    if other_d != d:
+                        vel[idx_hi[penetrating], other_d] *= (1.0 - friction)
+
 
 def compute_dt_cfl(
     v: np.ndarray,
@@ -237,6 +316,9 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
 
     # boundary particles remain static by construction (not integrated)
     state.vel[state.is_boundary] = 0.0
+
+    # Enforce domain boundaries (collision)
+    enforce_domain_boundary_constraints(state, cfg)
 
     return dt
 

@@ -9,7 +9,9 @@
     "type": "box",
     "min": [0.0, 0.0],
     "max": [1.0, 0.6],
-    "boundary_layers": 3
+    "boundary_layers": 3,
+    "restitution": 0.0,
+    "friction": 0.05
   },
   "fluid": {
     "type": "block",
@@ -66,4 +68,3 @@
     }
   }
 }
-

@@ -81,6 +81,14 @@ def main() -> int:
     steps = int(time_cfg.get("steps", 50))
     log_every = int(time_cfg.get("log_every", 10))
 
+    # Domain / Boundary constraints
+    domain_cfg = scene.get("domain", {})
+    domain_min = None
+    domain_max = None
+    if "min" in domain_cfg and "max" in domain_cfg:
+        domain_min = np.array(domain_cfg["min"], dtype=np.float64)
+        domain_max = np.array(domain_cfg["max"], dtype=np.float64)
+
     cfg = SimConfig(
         support_radius=h,
         rho0=rho0,
@@ -92,6 +100,13 @@ def main() -> int:
         dt_fixed=float(time_cfg.get("dt_fixed", 5e-4)),
         use_cfl=bool(use_cfl),
         # viscosity fields are optional in SimConfig and default to disabled
+        enable_viscosity=False,
+        kinematic_viscosity=0.0,
+        # domain collision
+        domain_min=domain_min,
+        domain_max=domain_max,
+        boundary_restitution=float(domain_cfg.get("restitution", 0.0)),
+        boundary_friction=float(domain_cfg.get("friction", 0.05)),
     )
 
     # -------------------------------------------------------------------------

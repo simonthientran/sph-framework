@@ -30,7 +30,7 @@ Equations used (from the prompt; do not invent others):
 import numpy as np
 
 from sph.core.state import ParticleState
-from sph.core.simulator import SimConfig  # configuration container (no solver math here)
+from sph.core.simulator import SimConfig, enforce_domain_boundary_constraints  # configuration container (no solver math here)
 from sph.neighbors.spatial_hash import SpatialHash
 from sph.sph.kernels import cubic_spline_W, cubic_spline_gradW
 
@@ -622,6 +622,9 @@ def step_pcisph_with_boundaries(
 
     # boundary remains static
     state.vel[state.is_boundary] = 0.0
+
+    # Enforce domain boundaries (collision)
+    enforce_domain_boundary_constraints(state, cfg)
 
     # Store final p/rho for observability (read by diagnostics/export).
     state.p[:] = p
