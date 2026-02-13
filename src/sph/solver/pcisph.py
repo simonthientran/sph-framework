@@ -411,17 +411,16 @@ def step_pcisph_with_boundaries(
 
     rho_p = np.zeros((n,), dtype=np.float64)
 
-    # Basic sanity metrics (read-only) for debugging PCISPH stability.
+    # Debug-only sanity metrics (read-only).
+    # Keep debug output to ONE line per step (so normal runs stay clean).
+    debug_neigh_counts = None
+    debug_rho_star_err_avg = None
     if bool(debug):
-        neigh_counts = np.array([len(ns.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
-        avg_rho_star_err = float(np.mean(np.abs((rho_star[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
-        print(
-            f"[PCISPH] dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
-            f"kPCI={float(kPCI):.3e} "
-            f"rho*_err_avg={avg_rho_star_err:.3e} "
-            f"neigh(min/mean/max)={int(neigh_counts.min())}/{float(neigh_counts.mean()):.1f}/{int(neigh_counts.max())}"
-        )
+        debug_neigh_counts = np.array([len(ns.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
+        debug_rho_star_err_avg = float(np.mean(np.abs((rho_star[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
 
+    iters_used = 0
+    avg_err_final = float("nan")
     for it in range(1, max_iters + 1):
         # Eq. (53): use rho0 in denominators for the pressure solve loop.
         # This avoids destabilizing feedback if intermediate rho estimates deviate
@@ -435,10 +434,23 @@ def step_pcisph_with_boundaries(
 
         # avg_err = mean( abs((rho* + rho_p - rho0)/rho0) ) over fluid
         avg_err = float(np.mean(np.abs((rho_star[fluid_ids] + rho_p[fluid_ids] - float(cfg.rho0)) / float(cfg.rho0))))
-        if bool(debug):
-            print(f"[PCISPH] iter={it} avg_err={avg_err:.3e}")
+        iters_used = it
+        avg_err_final = avg_err
         if avg_err < density_tol:
             break
+    if bool(debug):
+        if debug_neigh_counts is None or debug_rho_star_err_avg is None:
+            # Should not happen, but keep debug robust.
+            debug_neigh_counts = np.zeros((1,), dtype=np.int64)
+            debug_rho_star_err_avg = float("nan")
+        print(
+            f"[PCISPH] dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
+            f"kPCI={float(kPCI):.3e} "
+            f"rho*_err_avg={float(debug_rho_star_err_avg):.3e} "
+            f"iters_used={int(iters_used)}/{int(max_iters)} "
+            f"avg_err_final={float(avg_err_final):.3e} "
+            f"neigh(min/mean/max)={int(debug_neigh_counts.min())}/{float(debug_neigh_counts.mean()):.1f}/{int(debug_neigh_counts.max())}"
+        )
 
     # (8) Final velocity + position update with final pressure acceleration (Eq. (53))
     rho_final = np.full((n,), float(cfg.rho0), dtype=np.float64)

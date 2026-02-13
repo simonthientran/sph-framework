@@ -57,7 +57,8 @@ def main() -> int:
 
     solver_cfg = scene.get("solver", {"type": "wcsph"})
     solver_type = str(solver_cfg.get("type", "wcsph")).lower()
-    print(f"[BOOT] solver={solver_type}")
+    # Print solver params for reproducibility/observability (no physics impact).
+    print(f"[BOOT] solver={solver_type} cfg={json.dumps(solver_cfg, sort_keys=True)}")
 
     # -------------------------------------------------------------------------
     # Build state (fluid + boundary particles)
