@@ -57,9 +57,11 @@ class SimConfig:
     domain_max: np.ndarray | None = None
     boundary_restitution: float = 0.0
     boundary_friction: float = 0.05
+    # Collision push-out epsilon. If None, we derive eps = 1e-4 * support_radius.
+    boundary_eps: float | None = None
 
 
-def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig) -> None:
+def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
     """
     Enforce axis-aligned bounding box constraints on FLUID particles.
     """
@@ -78,56 +80,94 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig) ->
     dmax = cfg.domain_max
     restitution = float(cfg.boundary_restitution)
     friction = float(cfg.boundary_friction)
+    eps = cfg.boundary_eps
+    if eps is None:
+        # Default: a tiny fraction of the kernel support to avoid particles landing
+        # exactly on the boundary (which can lead to repeated "teleport-to-wall"
+        # artifacts due to floating point round-off).
+        eps = 1e-4 * float(cfg.support_radius)
+    eps = float(max(eps, 0.0))
     
     # We iterate per dimension. Vectorized over fluid particles.
     # dim is inferred from dmin/dmax shape.
     dim = state.dim
     
+    # Debug throttling: avoid printing too many per step.
+    debug_budget = 10
+
     for d in range(dim):
-        # Lower bound
+        # -------------------------
+        # x/y/z MIN face (normal +axis)
+        # -------------------------
         mask_lo = pos[fluid_ids, d] < dmin[d]
         if np.any(mask_lo):
-            # Indices of fluid particles violating lower bound
-            idx_lo = fluid_ids[mask_lo]
-            
-            # Clamp position
-            pos[idx_lo, d] = dmin[d]
-            
-            # Reflect velocity: v_n = -restitution * v_n (if v_n < 0)
-            # v_n is vel[idx_lo, d]. It should be < 0 if penetrating.
-            # We only reflect if moving OUT (v < 0). If v > 0, they are already returning.
-            # But position clamp might put them exactly on boundary.
-            
-            v_n = vel[idx_lo, d]
-            penetrating = v_n < 0.0
-            
-            # Reflect normal component
-            vel[idx_lo[penetrating], d] = -restitution * v_n[penetrating]
-            
-            # Apply friction to tangential components
-            # v_t = v - v_n * n. Here n is axis aligned. Tangent is just other dims.
-            # Simple scaling of other components: v_t_new = v_t * (1 - friction)
-            if friction > 0.0:
-                for other_d in range(dim):
-                    if other_d != d:
-                        vel[idx_lo[penetrating], other_d] *= (1.0 - friction)
+            idx = fluid_ids[mask_lo]
+            old_pos_d = pos[idx, d].copy()
+            old_vel = vel[idx].copy()
 
-        # Upper bound
+            # Push-out with epsilon (prevents exact-on-boundary teleport artifacts)
+            pos[idx, d] = dmin[d] + eps
+
+            # Normal vector for min face points inward (+axis)
+            n = np.zeros((dim,), dtype=np.float64)
+            n[d] = 1.0
+            # NOTE: vel[idx] uses advanced indexing (copy), so we must write back to vel[ids_move].
+            v_n = (vel[idx] @ n)  # scalar normal component
+            moving_out = v_n < 0.0
+            if np.any(moving_out):
+                ids_move = idx[moving_out]
+                vn = v_n[moving_out][:, None] * n[None, :]
+                vt = vel[ids_move] - vn
+                vn_new = -restitution * vn
+                vt_new = (1.0 - friction) * vt
+                vel[ids_move] = vn_new + vt_new
+
+            if debug and debug_budget > 0:
+                depth = (dmin[d] - old_pos_d)
+                for k in range(min(int(idx.size), debug_budget)):
+                    i = int(idx[k])
+                    print(
+                        f"[BOUNDARY] i={i} face={['x','y','z'][d]}_min "
+                        f"pen={float(depth[k]):.3e} "
+                        f"pos:{float(old_pos_d[k]):.6f}->{float(pos[i, d]):.6f} "
+                        f"vel:{old_vel[k]}->{vel[i]}"
+                    )
+                debug_budget -= int(min(int(idx.size), debug_budget))
+
+        # -------------------------
+        # x/y/z MAX face (normal -axis)
+        # -------------------------
         mask_hi = pos[fluid_ids, d] > dmax[d]
         if np.any(mask_hi):
-            idx_hi = fluid_ids[mask_hi]
-            
-            pos[idx_hi, d] = dmax[d]
-            
-            v_n = vel[idx_hi, d]
-            penetrating = v_n > 0.0
-            
-            vel[idx_hi[penetrating], d] = -restitution * v_n[penetrating]
-            
-            if friction > 0.0:
-                for other_d in range(dim):
-                    if other_d != d:
-                        vel[idx_hi[penetrating], other_d] *= (1.0 - friction)
+            idx = fluid_ids[mask_hi]
+            old_pos_d = pos[idx, d].copy()
+            old_vel = vel[idx].copy()
+
+            pos[idx, d] = dmax[d] - eps
+
+            n = np.zeros((dim,), dtype=np.float64)
+            n[d] = -1.0
+            v_n = (vel[idx] @ n)
+            moving_out = v_n < 0.0
+            if np.any(moving_out):
+                ids_move = idx[moving_out]
+                vn = v_n[moving_out][:, None] * n[None, :]
+                vt = vel[ids_move] - vn
+                vn_new = -restitution * vn
+                vt_new = (1.0 - friction) * vt
+                vel[ids_move] = vn_new + vt_new
+
+            if debug and debug_budget > 0:
+                depth = (old_pos_d - dmax[d])
+                for k in range(min(int(idx.size), debug_budget)):
+                    i = int(idx[k])
+                    print(
+                        f"[BOUNDARY] i={i} face={['x','y','z'][d]}_max "
+                        f"pen={float(depth[k]):.3e} "
+                        f"pos:{float(old_pos_d[k]):.6f}->{float(pos[i, d]):.6f} "
+                        f"vel:{old_vel[k]}->{vel[i]}"
+                    )
+                debug_budget -= int(min(int(idx.size), debug_budget))
 
 
 def compute_dt_cfl(
@@ -354,7 +394,38 @@ def step_simulation(
         max_iters = int(solver_cfg_dict.get("max_iters", 8))
         density_tol = float(solver_cfg_dict.get("density_tol", 0.01))
         warm_start_pressure = bool(solver_cfg_dict.get("warm_start_pressure", True))
-        clamp_negative_pressure = bool(solver_cfg_dict.get("clamp_negative_pressure", True))
+        # ------------------------------------------------------------------
+        # Negative pressure handling (control logic only; equations unchanged)
+        #
+        # New config:
+        #   negative_pressure_mode: one of ["none", "hard_zero", "soft_cap"]
+        #   negative_pressure_cap: float | null
+        #   negative_pressure_soft_factor: float (default 0.5)
+        #
+        # Backwards compatibility:
+        # - legacy "clamp_negative_pressure" / "clamp_negative_pressure_final" map to:
+        #     True  -> "hard_zero"
+        #     False -> "none"
+        # - legacy "clamp_negative_pressure_iter" is still supported.
+        # ------------------------------------------------------------------
+        legacy_clamp = bool(solver_cfg_dict.get("clamp_negative_pressure", True))
+        legacy_final = bool(solver_cfg_dict.get("clamp_negative_pressure_final", legacy_clamp))
+        negative_pressure_mode = str(
+            solver_cfg_dict.get("negative_pressure_mode", "hard_zero" if legacy_final else "none")
+        ).lower()
+        negative_pressure_cap = solver_cfg_dict.get("negative_pressure_cap", None)
+        negative_pressure_cap = float(negative_pressure_cap) if negative_pressure_cap is not None else None
+        negative_pressure_soft_factor = float(solver_cfg_dict.get("negative_pressure_soft_factor", 0.2))
+        clamp_negative_pressure_iter = bool(solver_cfg_dict.get("clamp_negative_pressure_iter", False))
+        # Less aggressive default near free-surface (control logic only; no equation changes).
+        min_neighbors_for_pressure = int(solver_cfg_dict.get("min_neighbors_for_pressure", 7))
+        adaptive_min_neighbors_for_pressure = bool(solver_cfg_dict.get("adaptive_min_neighbors_for_pressure", True))
+        active_neighbor_ratio = float(solver_cfg_dict.get("active_neighbor_ratio", 0.7))
+        min_neighbors_floor = int(solver_cfg_dict.get("min_neighbors_floor", 5))
+        inactive_hold_steps = int(solver_cfg_dict.get("inactive_hold_steps", 0))
+        force_active_if_density_low = bool(solver_cfg_dict.get("force_active_if_density_low", True))
+        force_active_rho_min = solver_cfg_dict.get("force_active_rho_min", None)
+        force_active_rho_min = float(force_active_rho_min) if force_active_rho_min is not None else None
         debug_fixed_dt = bool(solver_cfg_dict.get("debug_fixed_dt", False))
         debug = bool(solver_cfg_dict.get("debug", False))
         debug_dump_on_step = solver_cfg_dict.get("debug_dump_on_step", None)
@@ -366,7 +437,17 @@ def step_simulation(
             max_iters=max_iters,
             density_tol=density_tol,
             warm_start_pressure=warm_start_pressure,
-            clamp_negative_pressure=clamp_negative_pressure,
+            negative_pressure_mode=negative_pressure_mode,
+            negative_pressure_cap=negative_pressure_cap,
+            negative_pressure_soft_factor=negative_pressure_soft_factor,
+            clamp_negative_pressure_iter=clamp_negative_pressure_iter,
+            min_neighbors_for_pressure=min_neighbors_for_pressure,
+            adaptive_min_neighbors_for_pressure=adaptive_min_neighbors_for_pressure,
+            active_neighbor_ratio=active_neighbor_ratio,
+            min_neighbors_floor=min_neighbors_floor,
+            inactive_hold_steps=inactive_hold_steps,
+            force_active_if_density_low=force_active_if_density_low,
+            force_active_rho_min=force_active_rho_min,
             debug_fixed_dt=debug_fixed_dt,
             debug=debug,
             debug_dump_on_step=debug_dump_on_step,

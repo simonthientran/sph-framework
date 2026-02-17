@@ -83,6 +83,7 @@ def main() -> int:
 
     # Domain / Boundary constraints
     domain_cfg = scene.get("domain", {})
+    boundary_cfg = scene.get("boundary", {})  # optional (preferred for collision params)
     domain_min = None
     domain_max = None
     if "min" in domain_cfg and "max" in domain_cfg:
@@ -105,8 +106,13 @@ def main() -> int:
         # domain collision
         domain_min=domain_min,
         domain_max=domain_max,
-        boundary_restitution=float(domain_cfg.get("restitution", 0.0)),
-        boundary_friction=float(domain_cfg.get("friction", 0.05)),
+        boundary_restitution=float(boundary_cfg.get("restitution", domain_cfg.get("restitution", 0.0))),
+        boundary_friction=float(boundary_cfg.get("friction", domain_cfg.get("friction", 0.05))),
+        boundary_eps=(
+            float(boundary_cfg.get("eps"))
+            if boundary_cfg.get("eps", None) is not None
+            else (float(domain_cfg.get("eps")) if domain_cfg.get("eps", None) is not None else None)
+        ),
     )
 
     # -------------------------------------------------------------------------
