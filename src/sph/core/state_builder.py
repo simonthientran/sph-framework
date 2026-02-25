@@ -83,6 +83,100 @@ def _sample_box_boundary_2d(domain_min: np.ndarray, domain_max: np.ndarray, spac
     return all_pts
 
 
+def spawn_boundary_walls_channel(
+    *,
+    domain_min: np.ndarray,
+    domain_max: np.ndarray,
+    spacing: float,
+    layers: int,
+    walls: tuple[str, ...] = ("xmin", "xmax", "ymin", "ymax"),
+) -> np.ndarray:
+    """
+    Spawn static boundary particles for a 2D channel/pipe segment.
+
+    This is a *scene builder* utility: it defines geometry only, not physics.
+    It reuses the same boundary sampling strategy as `_sample_box_boundary_2d`,
+    but allows selecting which faces are walled.
+
+    Args:
+        domain_min/domain_max: AABB of the channel domain.
+        spacing: particle spacing.
+        layers: number of boundary layers.
+        walls: subset of {"xmin","xmax","ymin","ymax"} to sample.
+
+    Returns:
+        (Nb,2) boundary particle positions.
+    """
+    walls_set = set(walls)
+    allowed = {"xmin", "xmax", "ymin", "ymax"}
+    unknown = walls_set - allowed
+    if unknown:
+        raise ValueError(f"unknown channel walls: {sorted(unknown)}")
+
+    pts: list[np.ndarray] = []
+    for k in range(int(layers)):
+        off = k * float(spacing)
+        x0 = float(domain_min[0] + off)
+        x1 = float(domain_max[0] - off)
+        y0 = float(domain_min[1] + off)
+        y1 = float(domain_max[1] - off)
+
+        xs = np.arange(x0, x1 + 1e-12, spacing, dtype=np.float64)
+        ys = np.arange(y0, y1 + 1e-12, spacing, dtype=np.float64)
+
+        if "ymin" in walls_set:
+            pts.append(np.stack([xs, np.full_like(xs, y0)], axis=1))
+        if "ymax" in walls_set:
+            pts.append(np.stack([xs, np.full_like(xs, y1)], axis=1))
+
+        if len(ys) > 2:
+            ys_inner = ys[1:-1]
+            if "xmin" in walls_set:
+                pts.append(np.stack([np.full_like(ys_inner, x0), ys_inner], axis=1))
+            if "xmax" in walls_set:
+                pts.append(np.stack([np.full_like(ys_inner, x1), ys_inner], axis=1))
+
+    if not pts:
+        return np.zeros((0, 2), dtype=np.float64)
+    all_pts = np.concatenate(pts, axis=0)
+    all_pts = np.unique(np.round(all_pts / spacing).astype(np.int64), axis=0).astype(np.float64) * spacing
+    return all_pts
+
+
+def spawn_fluid_block_in_channel(
+    *,
+    domain_min: np.ndarray,
+    domain_max: np.ndarray,
+    spacing: float,
+    wall_layers: int,
+    pad_x: float = 0.0,
+    pad_y: float = 0.0,
+) -> np.ndarray:
+    """
+    Spawn a uniform fluid particle grid inside a 2D channel, leaving clearance
+    from the walls.
+
+    This is intended for pipe/channel examples where the geometry is "fill the
+    channel interior". It is a geometry helper only.
+
+    Args:
+        domain_min/domain_max: AABB of the channel.
+        spacing: particle spacing.
+        wall_layers: boundary layers count; we leave at least wall_layers*spacing
+            clearance from any wall to avoid initial overlap with boundary particles.
+        pad_x/pad_y: additional clearance in x/y.
+
+    Returns:
+        (Nf,2) fluid positions.
+    """
+    clearance = float(max(0, int(wall_layers))) * float(spacing)
+    pmin = np.array([domain_min[0] + clearance + pad_x, domain_min[1] + clearance + pad_y], dtype=np.float64)
+    pmax = np.array([domain_max[0] - clearance - pad_x, domain_max[1] - clearance - pad_y], dtype=np.float64)
+    if np.any(pmax <= pmin):
+        raise ValueError("channel too small for requested wall clearance/padding")
+    return _grid_points_2d(pmin, pmax, spacing)
+
+
 def build_scene_state(scene: dict) -> ParticleState:
     # region agent log
     _agent_log(
@@ -110,19 +204,42 @@ def build_scene_state(scene: dict) -> ParticleState:
 
     # --- fluid block
     fluid = scene["fluid"]
-    if fluid["type"] != "block":
+    ftype = str(fluid["type"]).lower()
+    if ftype == "block":
+        fmin = np.array(fluid["min"], dtype=np.float64)
+        fmax = np.array(fluid["max"], dtype=np.float64)
+        fluid_pos = _grid_points_2d(fmin, fmax, spacing)
+    elif ftype == "channel_fill":
+        # Pipe/channel example: fill channel interior with a uniform grid.
+        pad = float(fluid.get("padding", 0.0))
+        fluid_pos = spawn_fluid_block_in_channel(
+            domain_min=domain_min,
+            domain_max=domain_max,
+            spacing=spacing,
+            wall_layers=layers,
+            pad_x=float(fluid.get("pad_x", pad)),
+            pad_y=float(fluid.get("pad_y", pad)),
+        )
+    else:
         raise ValueError(f"unsupported fluid type: {fluid['type']}")
-
-    fmin = np.array(fluid["min"], dtype=np.float64)
-    fmax = np.array(fluid["max"], dtype=np.float64)
-
-    fluid_pos = _grid_points_2d(fmin, fmax, spacing)
 
     v0 = np.array(fluid.get("initial_velocity", [0.0, 0.0]), dtype=np.float64)
     fluid_vel = np.repeat(v0[None, :], fluid_pos.shape[0], axis=0)
 
     # --- boundary sampling (static)
-    boundary_pos = _sample_box_boundary_2d(domain_min, domain_max, spacing, layers=layers)
+    domain_cfg = scene.get("domain", {})
+    walls = tuple(str(w).lower() for w in domain_cfg.get("boundary_walls", ["xmin", "xmax", "ymin", "ymax"]))
+    if str(domain_cfg.get("type", "box")).lower() in {"channel", "pipe", "box"}:
+        # `box` remains the default; `boundary_walls` lets channel scenes omit end caps.
+        boundary_pos = spawn_boundary_walls_channel(
+            domain_min=domain_min,
+            domain_max=domain_max,
+            spacing=spacing,
+            layers=layers,
+            walls=walls,
+        )
+    else:
+        boundary_pos = _sample_box_boundary_2d(domain_min, domain_max, spacing, layers=layers)
     boundary_vel = np.zeros((boundary_pos.shape[0], dim), dtype=np.float64)
 
     # --- combine

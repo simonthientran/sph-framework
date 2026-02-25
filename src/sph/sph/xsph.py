@@ -60,7 +60,7 @@ def xsph_velocity_correction(
             # Boundary velocities are typically zero (static boundary samples),
             # which is consistent with the boundary handling approach.
             vij = state.vel[j] - vi
-            Wij = cubic_spline_W(state.pos[i] - state.pos[j], h=h, dim=dim)
+            Wij = cubic_spline_W(neighbor_search.displacement(state.pos[i], state.pos[j]), h=h, dim=dim)
             corr += (state.mass[j] / state.rho[j]) * vij * Wij
 
         dv[i] = eps * corr

@@ -1,0 +1,104 @@
+{
+  "meta": {
+    "dimensions": 2,
+    "description": "Benchmark: 2D Channel Poiseuille Flow"
+  },
+  "domain": {
+    "type": "channel",
+    "min": [0.0, 0.0],
+    "max": [4.0, 1.0],
+    "boundary_layers": 3,
+    "boundary_walls": ["ymin", "ymax"]
+  },
+  "fluid": {
+    "type": "channel_fill",
+    "spacing": 0.02,
+    "pad_x": 0.0,
+    "pad_y": 0.0,
+    "initial_velocity": [1.0, 0.0]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "k": 50000.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 1e-2
+    }
+  },
+  "neighbors": {
+    "support_radius": 0.04
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1e-5,
+    "dt_max": 2e-4,
+    "steps": 1000,
+    "log_every": 50
+  },
+  "boundaries": [
+    {
+      "type": "inflow",
+      "min": [0.0, 0.0],
+      "max": [0.1, 1.0],
+      "velocity": [1.0, 0.0]
+    },
+    {
+      "type": "outflow",
+      "min": [3.9, 0.0],
+      "max": [4.1, 1.0]
+    },
+    {
+      "type": "wall",
+      "min": [0.0, 0.0],
+      "max": [4.0, 1.0],
+      "slip_mode": "no-slip",
+      "restitution": 0.0
+    }
+  ],
+  "metrics": {
+    "enable": true,
+    "every": 50,
+    "planes": [
+      {
+        "name": "inlet",
+        "min": [0.2, 0.0],
+        "max": [0.3, 1.0],
+        "normal": [1.0, 0.0]
+      },
+      {
+        "name": "outlet",
+        "min": [3.5, 0.0],
+        "max": [3.6, 1.0],
+        "normal": [1.0, 0.0]
+      }
+    ],
+    "profiles": [
+      {
+        "name": "mid_channel",
+        "min": [1.9, 0.0],
+        "max": [2.1, 1.0],
+        "axis": 1,
+        "bins": 20
+      }
+    ]
+  },
+  "forces": {
+    "gravity": [0.0, 0.0]
+  },
+  "solver": {
+    "type": "pcisph",
+    "max_iters": 5,
+    "density_tol": 0.01,
+    "debug": false
+  },
+  "export": {
+    "results": {
+      "enable": true,
+      "formats": ["csv"],
+      "every": 50
+    }
+  }
+}

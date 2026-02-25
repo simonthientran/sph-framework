@@ -38,7 +38,7 @@ def viscosity_acceleration_laplace_eq23(
         for j in neighbor_search.query(i, state.pos):
             xj = state.pos[j]
             vj = state.vel[j]
-            rij = xi - xj
+            rij = neighbor_search.displacement(xi, xj)
             r = float(np.linalg.norm(rij))
             if r <= eps:
                 continue

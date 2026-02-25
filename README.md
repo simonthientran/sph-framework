@@ -33,3 +33,9 @@ These knobs do **not** change the PCISPH equations; they only change control log
 - **Boundary response (AABB collision)**
   - `boundary.eps`: push-out epsilon to avoid exact-on-wall teleports
   - `boundary.restitution`, `boundary.friction`: normal reflection + tangential damping
+
+## Results export (CSV + XLSX)
+See `docs/results_export.md` for how to enable structured per-step results export to:
+- `<out_dir>/<base_name>_steps.csv`
+- `<out_dir>/<base_name>_vxprof.csv`
+- `<out_dir>/<base_name>.xlsx` (sheets: `steps`, `vx_profile`, `meta`)

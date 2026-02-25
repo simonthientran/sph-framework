@@ -191,7 +191,7 @@ def _pressure_accel_eq53_active(
                 rhoj = float(rho[j])
                 rhoj2 = rhoj * rhoj + eps
 
-            gradW = cubic_spline_gradW(xi - state.pos[j], h=h, dim=dim)
+            gradW = cubic_spline_gradW(ns.displacement(xi, state.pos[j]), h=h, dim=dim)
             acc -= float(state.mass[j]) * (pi / rhoi2 + pj / rhoj2) * gradW
 
         a_p[i] = acc
@@ -230,7 +230,7 @@ def _rho_p_eq60_active(
         acc = 0.0
 
         for j in ns.query(int(i), state.pos):
-            gradW = cubic_spline_gradW(xi - state.pos[j], h=h, dim=dim)
+            gradW = cubic_spline_gradW(ns.displacement(xi, state.pos[j]), h=h, dim=dim)
             acc += float(state.mass[j]) * float(np.dot(api - a_p[j], gradW))
 
         rho_p[i] = (dt * dt) * acc
@@ -301,7 +301,7 @@ def _compute_kpci_eq58(
     mi_safe = max(mi, 1e-30)
 
     for j in ns.query(int(i_template), state.pos):
-        gradW = cubic_spline_gradW(xi - state.pos[j], h=h, dim=dim)
+        gradW = cubic_spline_gradW(ns.displacement(xi, state.pos[j]), h=h, dim=dim)
         # IMPORTANT (minimal scaling fix):
         # Later equations (53) and (60) explicitly use neighbor masses m_j.
         # Using the same mass-weighted gradients here keeps kPCI scaling
@@ -384,7 +384,7 @@ def _predict_rho_star_eq51(
 
         add = 0.0
         for j in ns.query(int(i), state.pos):
-            rij = xi - state.pos[j]
+            rij = ns.displacement(xi, state.pos[j])
             gradW = cubic_spline_gradW(rij, h=h, dim=dim)
 
             # base density term
@@ -459,7 +459,7 @@ def _pressure_accel_eq53(
                 rhoj = float(rho[j])
                 rhoj2 = rhoj * rhoj + eps
 
-            gradW = cubic_spline_gradW(xi - state.pos[j], h=h, dim=dim)
+            gradW = cubic_spline_gradW(ns.displacement(xi, state.pos[j]), h=h, dim=dim)
             acc -= float(state.mass[j]) * (pi / rhoi2 + pj / rhoj2) * gradW
 
         a_p[i] = acc
@@ -504,7 +504,7 @@ def _rho_p_eq60(
         acc = 0.0
 
         for j in ns.query(int(i), state.pos):
-            gradW = cubic_spline_gradW(xi - state.pos[j], h=h, dim=dim)
+            gradW = cubic_spline_gradW(ns.displacement(xi, state.pos[j]), h=h, dim=dim)
             acc += float(state.mass[j]) * float(np.dot(api - a_p[j], gradW))
 
         rho_p[i] = (dt * dt) * acc
@@ -562,7 +562,13 @@ def step_pcisph_with_boundaries(
     h = float(cfg.support_radius)
 
     # (1) Neighbor search on all particles (fluid + boundary)
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(
+        support_radius=h,
+        dim=state.dim,
+        periodic_min=cfg.domain_min,
+        periodic_max=cfg.domain_max,
+        periodic_axes=cfg.periodic_axes,
+    )
     ns.build(state.pos)
 
     fluid_ids = state.fluid_indices
@@ -1080,8 +1086,8 @@ def step_pcisph_with_boundaries(
     # boundary remains static
     state.vel[state.is_boundary] = 0.0
 
-    # Enforce domain boundaries (collision)
-    enforce_domain_boundary_constraints(state, cfg, debug=bool(debug))
+    # Domain boundaries are now handled externally by BoundaryManager in bootstrap.py
+    # to support custom boundary types (Wall, Inflow, Outflow).
 
     # Store final p/rho for observability (read by diagnostics/export).
     state.p[:] = p

@@ -59,6 +59,10 @@ class SimConfig:
     boundary_friction: float = 0.05
     # Collision push-out epsilon. If None, we derive eps = 1e-4 * support_radius.
     boundary_eps: float | None = None
+    # Periodic boundary conditions: axes indices (e.g. (0,) for periodic x).
+    # When set, positions are wrapped into [domain_min, domain_max) along these axes,
+    # and neighbor distances use minimum-image convention via SpatialHash.displacement().
+    periodic_axes: tuple[int, ...] = ()
 
 
 def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
@@ -96,6 +100,13 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
     debug_budget = 10
 
     for d in range(dim):
+        # Periodic axes: wrap position only; no collision response.
+        if cfg.periodic_axes and int(d) in set(int(a) for a in cfg.periodic_axes):
+            L = float(dmax[d] - dmin[d])
+            if L > 0.0:
+                x = pos[fluid_ids, d] - dmin[d]
+                pos[fluid_ids, d] = (x % L) + dmin[d]
+            continue
         # -------------------------
         # x/y/z MIN face (normal +axis)
         # -------------------------
@@ -217,7 +228,13 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
     h = float(cfg.support_radius)
 
     # --- neighbor search
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(
+        support_radius=h,
+        dim=state.dim,
+        periodic_min=cfg.domain_min,
+        periodic_max=cfg.domain_max,
+        periodic_axes=cfg.periodic_axes,
+    )
     ns.build(state.pos)
 
     # --- density reconstruction
@@ -298,7 +315,13 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     h = float(cfg.support_radius)
 
     # neighbor search over ALL particles (fluid + boundary)
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(
+        support_radius=h,
+        dim=state.dim,
+        periodic_min=cfg.domain_min,
+        periodic_max=cfg.domain_max,
+        periodic_axes=cfg.periodic_axes,
+    )
     ns.build(state.pos)
 
     # (1) density including boundary contribution (Eq. 83)
@@ -357,8 +380,7 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     # boundary particles remain static by construction (not integrated)
     state.vel[state.is_boundary] = 0.0
 
-    # Enforce domain boundaries (collision)
-    enforce_domain_boundary_constraints(state, cfg)
+    # Domain boundaries are now handled externally by BoundaryManager in bootstrap.py
 
     return dt
 

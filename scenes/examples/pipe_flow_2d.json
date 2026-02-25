@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "pipe_flow_1phase_2d",
+    "version": 1,
+    "seed": 0,
+    "dimensions": 2
+  },
+  "domain": {
+    "type": "channel",
+    "min": [0.0, 0.0],
+    "max": [0.5, 0.2],
+    "boundary_layers": 3,
+    "boundary_walls": ["ymin", "ymax"],
+    "periodic_axes": ["x"]
+  },
+  "boundary": {
+    "eps": 4.0e-06,
+    "restitution": 0.0,
+    "friction": 0.2
+  },
+  "fluid": {
+    "type": "channel_fill",
+    "spacing": 0.02,
+    "padding": 0.0,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.04
+  },
+  "forces": {
+    "gravity": [0.0, 0.0],
+    "body_force": [1.0, 0.0]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 500.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 1.0e-6
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1e-05,
+    "dt_max": 0.0005,
+    "dt_fixed": 0.0005,
+    "steps": 500,
+    "log_every": 10
+  },
+  "solver": {
+    "type": "wcsph",
+    "debug_vx_profile": {
+      "enable": true,
+      "every": 50,
+      "bins": 8
+    }
+  },
+  "export": {
+    "results": {
+      "enable": true,
+      "out_dir": "out",
+      "base_name": "pipe_flow_2d",
+      "formats": ["csv", "xlsx"],
+      "every": 0
+    },
+    "csv": { "enable": false, "every": 50, "dir": "out/csv" },
+    "vtk": { "enable": false, "every": 50, "dir": "out/vtk" }
+  }
+}
+
+
