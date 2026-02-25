@@ -1,0 +1,72 @@
+{
+    "name": "Poiseuille 2D Benchmark",
+    "solver": {
+        "type": "pcisph",
+        "max_iter": 5
+    },
+    "fluid": {
+        "type": "channel_fill",
+        "spacing": 0.02,
+        "rho0": 1000.0,
+        "eos_k": 3.0,
+        "viscosity": 0.001
+    },
+    "material": {
+        "rho0": 1000.0,
+        "viscosity": {
+            "enable": true,
+            "nu": 0.001
+        }
+    },
+    "neighbors": {
+        "support_radius": 0.04
+    },
+    "meta": {
+        "dimensions": 2
+    },
+    "domain": {
+        "min": [
+            -0.5,
+            -0.5,
+            -0.01
+        ],
+        "max": [
+            0.5,
+            0.5,
+            0.01
+        ]
+    },
+    "boundary": {
+        "walls": {
+            "type": "wall",
+            "no_slip": true
+        },
+        "inflow": {
+            "type": "inflow",
+            "velocity": [
+                1.0,
+                0.0,
+                0.0
+            ]
+        },
+        "outflow": {
+            "type": "outflow",
+            "thickness": 0.05
+        }
+    },
+    "time": {
+        "steps": 2000,
+        "dt": 5e-4,
+        "cfl": true
+    },
+    "metrics": {
+        "profile": "poiseuille",
+        "interval": 100,
+        "dpdx": -10.0,
+        "mu": 0.001
+    },
+    "export": {
+        "every_n": 200,
+        "output_dir": "out/poiseuille_2d"
+    }
+}
