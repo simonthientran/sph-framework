@@ -34,6 +34,8 @@ class VxProfileConfig:
 @dataclass(frozen=True)
 class VxProfileSample:
     step: int
+    y0_eff: float
+    h_eff: float
     y_centers: list[float]
     counts: list[int]
     mean_vx: list[float]
@@ -320,6 +322,8 @@ class VxProfileDiagnostics:
 
         return VxProfileSample(
             step=int(step),
+            y0_eff=float(y0_eff),
+            h_eff=float(y_map_max - y_map_min),
             y_centers=[float(v) for v in centers.tolist()],
             counts=counts,
             mean_vx=means,
