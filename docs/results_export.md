@@ -2,6 +2,21 @@
 
 This framework can export structured per-step metrics **without parsing stdout**.
 
+### VX profile diagnostics mode
+
+`solver.debug_vx_profile.y_extent_mode` controls how the y-extent for profile
+bins is selected:
+
+- `config` (default): strict benchmark mode using configured `y0`/`H`
+- `slice_auto`: robust diagnostics mode using the sampled set after x-slice
+  filtering (`y0_eff=min(y)`, `H_eff=max(y)-min(y)`)
+
+In `slice_auto` mode, logs include:
+
+- `[VXPROF_AUTO] ... y0_eff=... H_eff=... y_world_range=[...]`
+- `[VXANA] ... mode=slice_auto ...`
+- `[VXERR] ... empty_bins=... used_bins=k/total ...`
+
 ### Enable in scene JSON
 
 Add this block:

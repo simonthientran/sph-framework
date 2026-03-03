@@ -39,3 +39,24 @@ See `docs/results_export.md` for how to enable structured per-step results expor
 - `<out_dir>/<base_name>_steps.csv`
 - `<out_dir>/<base_name>_vxprof.csv`
 - `<out_dir>/<base_name>.xlsx` (sheets: `steps`, `vx_profile`, `meta`)
+
+## Poiseuille Quality Gate
+Run the periodic-x 2D Poiseuille benchmark:
+
+`PYTHONPATH=src python -m sph.core.bootstrap scenes/benchmarks/poiseuille_2d.json`
+
+Run the regression gate (500-step headless check):
+
+`PYTHONPATH=src python -m pytest -q tests/test_poiseuille_quality_gate.py`
+
+For `debug_vx_profile`, robust per-bin CSV is written to the path in
+`solver.debug_vx_profile.out_file` (example:
+`out/pipe_flow_2d/vx_profile_bins.csv`) and `[VXERR]` lines print L2/Linf
+against the analytic Poiseuille profile.
+
+Outputs:
+- `out/poiseuille_2d/run_steps.csv`
+- `out/poiseuille_2d/run_vxprof.csv`
+- `out/poiseuille_2d/run.xlsx`
+- `out/poiseuille_2d/poiseuille_profile.csv` (numeric/analytic profile bins + relative L2)
+- `out/poiseuille_2d/metrics.csv` (step summary and profile bins)
