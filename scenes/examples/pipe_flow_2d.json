@@ -40,7 +40,7 @@
     },
     "viscosity": {
       "enable": true,
-      "nu": 1.0e-6
+      "nu": 1.0e-2
     }
   },
   "time": {
@@ -57,7 +57,16 @@
     "debug_vx_profile": {
       "enable": true,
       "every": 50,
-      "bins": 8
+      "bins": 8,
+      "use_x_slice": true,
+      "x_slice_width": 0.08,
+      "axis": 1,
+      "component": 0,
+      "H": 0.2,
+      "y0": 0.0,
+      "gx": 1.0,
+      "nu": 1.0e-2,
+      "out_file": "out/pipe_flow_2d/vx_profile_bins.csv"
     }
   },
   "export": {

@@ -15,6 +15,7 @@ from sph.core.simulator import SimConfig, step_simulation
 from sph.core.state_builder import build_scene_state
 from sph.diagnostics.flow_metrics import FlowMetrics
 from sph.diagnostics.poiseuille import PoiseuilleDiagnostics, build_poiseuille_config
+from sph.diagnostics.vx_profile import VxProfileDiagnostics, build_vx_profile_config
 from sph.io.csv_export import export_particles_csv
 from sph.io.results_export import ResultsLogger, StepMetrics, VxProfileMetrics
 from sph.io.vtk_export import export_particles_vtk_legacy
@@ -57,66 +58,6 @@ def _build_boundary_manager(scene: dict, spacing: float, rho0: float) -> Boundar
                 )
             )
     return manager
-
-
-def _sample_vx_profile(scene: dict, solver_cfg: dict, cfg: SimConfig, state, step: int) -> VxProfileMetrics | None:
-    vxprof_cfg = solver_cfg.get("debug_vx_profile", {})
-    if not bool(vxprof_cfg.get("enable", False)):
-        return None
-    every = int(vxprof_cfg.get("every", 10))
-    bins = int(vxprof_cfg.get("bins", 8))
-    x_window_raw = vxprof_cfg.get("x_window", None)
-    x_window = float(x_window_raw) if x_window_raw is not None else 0.0
-    if every <= 0 or step % every != 0:
-        return None
-    if cfg.domain_min is None or cfg.domain_max is None or bins <= 0:
-        return None
-
-    fluid_ids = state.fluid_indices
-    if fluid_ids.size == 0:
-        return VxProfileMetrics(step=step, bins=bins, x_window=x_window, vx_mean=[])
-    pos = state.pos[fluid_ids]
-    vel = state.vel[fluid_ids]
-    active = pos[:, 0] < 1e8
-    pos = pos[active]
-    vel = vel[active]
-    if pos.size == 0:
-        return VxProfileMetrics(step=step, bins=bins, x_window=x_window, vx_mean=[])
-
-    if x_window > 0.0:
-        xmid = 0.5 * float(cfg.domain_min[0] + cfg.domain_max[0])
-        xmin = xmid - 0.5 * x_window
-        xmax = xmid + 0.5 * x_window
-        sel = (pos[:, 0] >= xmin) & (pos[:, 0] <= xmax)
-        pos = pos[sel]
-        vel = vel[sel]
-    if pos.size == 0:
-        return VxProfileMetrics(step=step, bins=bins, x_window=x_window, vx_mean=[])
-
-    y0 = float(cfg.domain_min[1])
-    y1 = float(cfg.domain_max[1])
-    edges = np.linspace(y0, y1, bins + 1, dtype=np.float64)
-    means: list[float] = []
-    vmaxs: list[float] = []
-    counts: list[int] = []
-    for b in range(bins):
-        if b + 1 == bins:
-            m = (pos[:, 1] >= edges[b]) & (pos[:, 1] <= edges[b + 1])
-        else:
-            m = (pos[:, 1] >= edges[b]) & (pos[:, 1] < edges[b + 1])
-        if np.any(m):
-            vx = vel[m, 0]
-            means.append(float(np.mean(vx)))
-            vmaxs.append(float(np.max(np.abs(vx))))
-            counts.append(int(np.count_nonzero(m)))
-        else:
-            means.append(float("nan"))
-            vmaxs.append(float("nan"))
-            counts.append(0)
-    scope = "all_x" if x_window <= 0.0 else f"xwin={x_window:.3f}"
-    parts = [f"b{b}:n={counts[b]} mean={means[b]:.3e} vmax={vmaxs[b]:.3e}" for b in range(bins)]
-    print(f"[VXPROF] step={step} bins={bins} {scope} " + " ".join(parts))
-    return VxProfileMetrics(step=step, bins=bins, x_window=x_window, vx_mean=means)
 
 
 def main() -> int:
@@ -248,6 +189,17 @@ def main() -> int:
         if poiseuille_cfg is not None:
             poiseuille_out = Path(scene.get("poiseuille_diagnostics", {}).get("out_file", f"out/{scene_name}/poiseuille_profile.csv"))
             poiseuille_logger = PoiseuilleDiagnostics(out_file=poiseuille_out, cfg=poiseuille_cfg)
+        vxprof_cfg = build_vx_profile_config(
+            scene=scene,
+            solver_cfg=solver_cfg,
+            support_radius=h,
+            domain_min=domain_min,
+            domain_max=domain_max,
+            scene_name=scene_name,
+        )
+        vxprof_logger: VxProfileDiagnostics | None = None
+        if vxprof_cfg is not None:
+            vxprof_logger = VxProfileDiagnostics(cfg=vxprof_cfg)
 
         boundary_manager = _build_boundary_manager(scene, spacing=spacing, rho0=rho0)
         use_boundary_manager = len(boundary_manager.boundaries) > 0
@@ -313,9 +265,17 @@ def main() -> int:
                 l2_rel = poiseuille_logger.sample_and_log(step=step, time_value=t, state=state)
                 print(f"[POISEUILLE] step={step} l2_rel={l2_rel:.3e}")
 
-            vx_metrics = _sample_vx_profile(scene=scene, solver_cfg=solver_cfg, cfg=cfg, state=state, step=step)
-            if vx_metrics is not None and results_logger is not None:
-                results_logger.log_vxprof(vx_metrics)
+            vx_sample = vxprof_logger.sample(step=step, state=state) if vxprof_logger is not None else None
+            if vx_sample is not None and results_logger is not None:
+                x_window = float(vxprof_cfg.x_slice_width) if (vxprof_cfg is not None and vxprof_cfg.use_x_slice) else 0.0
+                results_logger.log_vxprof(
+                    VxProfileMetrics(
+                        step=int(vx_sample.step),
+                        bins=int(len(vx_sample.mean_vx)),
+                        x_window=x_window,
+                        vx_mean=[float(v) for v in vx_sample.mean_vx],
+                    )
+                )
 
             if step == 1 or step % max(1, log_every) == 0:
                 pcisph_part = ""
