@@ -23,6 +23,7 @@ class VxProfileConfig:
     y_min: float | None
     y_max: float | None
     y0: float | None
+    y_extent_mode: str
     y_margin: float
     channel_height: float | None
     gx: float | None
@@ -79,6 +80,9 @@ def build_vx_profile_config(
     y_min = float(cfg["y_min"]) if "y_min" in cfg else None
     y_max = float(cfg["y_max"]) if "y_max" in cfg else None
     y0 = float(cfg["y0"]) if "y0" in cfg else None
+    y_extent_mode = str(cfg.get("y_extent_mode", "config")).lower()
+    if y_extent_mode not in {"config", "slice_auto"}:
+        y_extent_mode = "config"
     y_margin = float(cfg.get("y_margin", 0.0))
     channel_height = float(cfg["H"]) if "H" in cfg else None
 
@@ -125,6 +129,7 @@ def build_vx_profile_config(
         y_min=y_min,
         y_max=y_max,
         y0=y0,
+        y_extent_mode=y_extent_mode,
         y_margin=float(max(y_margin, 0.0)),
         channel_height=channel_height,
         gx=gx,
@@ -191,89 +196,127 @@ class VxProfileDiagnostics:
         y_world_min = float(np.min(y_world))
         y_world_max = float(np.max(y_world))
 
-        # Mapped coordinate y' = y - y0 for Poiseuille profile.
-        y0_world = self._resolve_y0(y_world)
-        y_mapped = y_world - y0_world
+        if self.cfg.y_extent_mode == "slice_auto":
+            y0_eff = float(y_world_min)
+            h_eff = float(y_world_max - y_world_min)
+            if not np.isfinite(h_eff) or h_eff <= 0.0:
+                return None
+            y_mapped = y_world - y0_eff
+            y_map_min = 0.0
+            y_map_max = h_eff
+            print(
+                f"[VXPROF_AUTO] step={step} y0_eff={y0_eff:.6g} H_eff={h_eff:.6g} "
+                f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}]"
+            )
+        else:
+            # Mapped coordinate y' = y - y0 for Poiseuille profile in strict config mode.
+            y0_eff = self._resolve_y0(y_world)
+            y_mapped = y_world - y0_eff
+            y_map_min, y_map_max = self._resolve_y_mapped_range(y_mapped)
+            if not np.isfinite(y_map_min) or not np.isfinite(y_map_max) or y_map_max <= y_map_min:
+                return None
+            in_channel = (y_mapped >= y_map_min) & (y_mapped <= y_map_max)
+            y_mapped = y_mapped[in_channel]
+            vel = vel[in_channel]
+            if y_mapped.size == 0:
+                return None
+            print(
+                f"[VXPROF_INFO] step={step} y0={y0_eff:.6g} "
+                f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}] "
+                f"y_mapped_range=[{float(np.min(y_mapped)):.6g},{float(np.max(y_mapped)):.6g}]"
+            )
 
-        y_map_min, y_map_max = self._resolve_y_mapped_range(y_mapped)
-        if not np.isfinite(y_map_min) or not np.isfinite(y_map_max) or y_map_max <= y_map_min:
-            return None
-        in_channel = (y_mapped >= y_map_min) & (y_mapped <= y_map_max)
-        y_mapped = y_mapped[in_channel]
-        vel = vel[in_channel]
-        if y_mapped.size == 0:
-            return None
-
-        print(
-            f"[VXPROF_INFO] step={step} y0={y0_world:.6g} "
-            f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}] "
-            f"y_mapped_range=[{float(np.min(y_mapped)):.6g},{float(np.max(y_mapped)):.6g}]"
-        )
-
-        edges = np.linspace(y_map_min, y_map_max, self.cfg.bins + 1, dtype=np.float64)
-        centers = 0.5 * (edges[:-1] + edges[1:])
-
-        counts: list[int] = []
-        means: list[float] = []
-        vmaxs: list[float] = []
-        stds: list[float] = []
-        analy: list[float] = []
-        empty_bins = 0
-
-        with self.cfg.out_file.open("a", encoding="utf-8", newline="") as f:
-            w = csv.writer(f)
+        def _compute_profile(bin_edges: np.ndarray) -> tuple[np.ndarray, list[int], list[float], list[float], list[float], int]:
+            ctr = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+            cts: list[int] = []
+            mns: list[float] = []
+            vms: list[float] = []
+            sds: list[float] = []
+            empties = 0
             for b in range(self.cfg.bins):
                 if b + 1 == self.cfg.bins:
-                    m = (y_mapped >= edges[b]) & (y_mapped <= edges[b + 1])
+                    m = (y_mapped >= bin_edges[b]) & (y_mapped <= bin_edges[b + 1])
                 else:
-                    m = (y_mapped >= edges[b]) & (y_mapped < edges[b + 1])
+                    m = (y_mapped >= bin_edges[b]) & (y_mapped < bin_edges[b + 1])
                 n = int(np.count_nonzero(m))
                 if n > 0:
                     vx = vel[m, self.cfg.component]
                     mean_vx = float(np.mean(vx))
                     vmax_vx = float(np.max(np.abs(vx)))
                     std_vx = float(np.std(vx))
-                    empty = 0
                 else:
                     mean_vx = 0.0
                     vmax_vx = 0.0
                     std_vx = 0.0
-                    empty = 1
-                    empty_bins += 1
+                    empties += 1
+                cts.append(n)
+                mns.append(mean_vx)
+                vms.append(vmax_vx)
+                sds.append(std_vx)
+            return ctr, cts, mns, vms, sds, empties
 
+        edges = np.linspace(y_map_min, y_map_max, self.cfg.bins + 1, dtype=np.float64)
+        centers, counts, means, vmaxs, stds, empty_bins = _compute_profile(edges)
+
+        # Robust mode fallback: avoid empty bins in diagnostics by using quantile edges
+        # when possible (strict benchmark mode keeps fixed config extents/bins).
+        if self.cfg.y_extent_mode == "slice_auto" and empty_bins > 0 and y_mapped.size >= self.cfg.bins:
+            q = np.linspace(0.0, 1.0, self.cfg.bins + 1, dtype=np.float64)
+            q_edges = np.quantile(y_mapped, q)
+            # Ensure strictly increasing edges for stable bin membership.
+            eps = 1e-12
+            for i in range(1, q_edges.size):
+                if q_edges[i] <= q_edges[i - 1]:
+                    q_edges[i] = q_edges[i - 1] + eps
+            centers_q, counts_q, means_q, vmaxs_q, stds_q, empty_bins_q = _compute_profile(q_edges)
+            if empty_bins_q <= empty_bins:
+                edges = q_edges
+                centers = centers_q
+                counts = counts_q
+                means = means_q
+                vmaxs = vmaxs_q
+                stds = stds_q
+                empty_bins = empty_bins_q
+                print(f"[VXPROF_AUTO] step={step} quantile_fallback=true empty_bins={empty_bins}")
+
+        analy: list[float] = []
+        with self.cfg.out_file.open("a", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            for b in range(self.cfg.bins):
                 vx_analytic = self._analytic_vx(y_mapped=float(centers[b]), h=float(y_map_max - y_map_min))
-
-                counts.append(n)
-                means.append(mean_vx)
-                vmaxs.append(vmax_vx)
-                stds.append(std_vx)
                 analy.append(vx_analytic)
-
                 w.writerow(
                     [
                         int(step),
                         int(b),
                         float(centers[b]),
-                        int(n),
-                        float(mean_vx),
-                        float(vmax_vx),
-                        float(std_vx),
+                        int(counts[b]),
+                        float(means[b]),
+                        float(vmaxs[b]),
+                        float(stds[b]),
                         float(vx_analytic),
-                        int(empty),
+                        int(1 if counts[b] == 0 else 0),
                     ]
                 )
 
         l2, linf = self._errors(means=means, analy=analy, counts=counts)
+        used_bins = int(sum(1 for n in counts if n > 0))
         vmax_analytic = self._vmax_analytic(h=float(y_map_max - y_map_min))
         vmax_measured = float(np.max(np.abs(np.asarray(means, dtype=np.float64)))) if means else 0.0
-        print(f"[VXANA] step={step} vmax_analytic={vmax_analytic:.3e} vmax_measured={vmax_measured:.3e}")
+        print(
+            f"[VXANA] step={step} mode={self.cfg.y_extent_mode} "
+            f"vmax_analytic={vmax_analytic:.3e} vmax_measured={vmax_measured:.3e}"
+        )
         if vmax_measured > 1e-12 and vmax_analytic / vmax_measured > 10.0:
             ratio = vmax_analytic / vmax_measured
             print(
                 f"[VXANA][WARN] step={step} analytic/measured vmax ratio={ratio:.2f}. "
                 f"Consider lowering gx or increasing nu."
             )
-        print(f"[VXERR] step={step} L2={l2:.3e} Linf={linf:.3e} empty_bins={empty_bins}")
+        print(
+            f"[VXERR] step={step} L2={l2:.3e} Linf={linf:.3e} "
+            f"empty_bins={empty_bins} used_bins={used_bins}/{self.cfg.bins}"
+        )
 
         return VxProfileSample(
             step=int(step),
