@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import math
 from dataclasses import dataclass
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,10 @@ class VxProfileConfig:
     y_max: float | None
     y0: float | None
     y_extent_mode: str
+    wall_y0: float | None
+    wall_h: float | None
+    wall_padding: float
+    avg_window_steps: int
     y_margin: float
     channel_height: float | None
     gx: float | None
@@ -45,6 +50,8 @@ class VxProfileSample:
     empty_bins: int
     l2: float
     linf: float
+    l2_avg: float
+    linf_avg: float
 
 
 def build_vx_profile_config(
@@ -83,10 +90,12 @@ def build_vx_profile_config(
     y_max = float(cfg["y_max"]) if "y_max" in cfg else None
     y0 = float(cfg["y0"]) if "y0" in cfg else None
     y_extent_mode = str(cfg.get("y_extent_mode", "config")).lower()
-    if y_extent_mode not in {"config", "slice_auto"}:
+    if y_extent_mode not in {"config", "slice_auto", "walls"}:
         y_extent_mode = "config"
+    avg_window_steps = max(1, int(cfg.get("avg_window_steps", 1)))
     y_margin = float(cfg.get("y_margin", 0.0))
     channel_height = float(cfg["H"]) if "H" in cfg else None
+    wall_padding = float(cfg.get("wall_padding", 0.5 * support_radius))
 
     gx = float(cfg["gx"]) if "gx" in cfg else None
     nu = float(cfg["nu"]) if "nu" in cfg else None
@@ -115,6 +124,21 @@ def build_vx_profile_config(
     if y_max is None and channel_height is not None and y0 is not None:
         y_max = float(y0 + channel_height)
 
+    # Preferred wall extent for validation mode:
+    # 1) explicit config y_min/y_max
+    # 2) scene domain bounds (channel/pipe)
+    wall_y0 = None
+    wall_h = None
+    if y_min is not None and y_max is not None and y_max > y_min:
+        wall_y0 = float(y_min)
+        wall_h = float(y_max - y_min)
+    elif domain_min is not None and domain_max is not None and axis < domain_min.size and axis < domain_max.size:
+        d0 = float(domain_min[axis])
+        d1 = float(domain_max[axis])
+        if d1 > d0:
+            wall_y0 = d0
+            wall_h = float(d1 - d0)
+
     # If x_mid is not explicit, use domain center.
     if x_mid is None and domain_min is not None and domain_max is not None and component < domain_min.size:
         x_mid = 0.5 * float(domain_min[component] + domain_max[component])
@@ -132,6 +156,10 @@ def build_vx_profile_config(
         y_max=y_max,
         y0=y0,
         y_extent_mode=y_extent_mode,
+        wall_y0=wall_y0,
+        wall_h=wall_h,
+        wall_padding=float(max(wall_padding, 0.0)),
+        avg_window_steps=avg_window_steps,
         y_margin=float(max(y_margin, 0.0)),
         channel_height=channel_height,
         gx=gx,
@@ -150,6 +178,8 @@ class VxProfileDiagnostics:
 
     def __init__(self, cfg: VxProfileConfig):
         self.cfg = cfg
+        self._mean_hist: deque[np.ndarray] = deque(maxlen=max(1, int(cfg.avg_window_steps)))
+        self._count_hist: deque[np.ndarray] = deque(maxlen=max(1, int(cfg.avg_window_steps)))
         self.cfg.out_file.parent.mkdir(parents=True, exist_ok=True)
         with self.cfg.out_file.open("w", encoding="utf-8", newline="") as f:
             w = csv.writer(f)
@@ -198,7 +228,38 @@ class VxProfileDiagnostics:
         y_world_min = float(np.min(y_world))
         y_world_max = float(np.max(y_world))
 
-        if self.cfg.y_extent_mode == "slice_auto":
+        if self.cfg.y_extent_mode == "walls":
+            wall_extent = self._resolve_wall_extent(state=state)
+            if wall_extent is None:
+                # Graceful fallback when wall extents are unavailable.
+                y0_eff = float(y_world_min)
+                h_eff = float(y_world_max - y_world_min)
+                if not np.isfinite(h_eff) or h_eff <= 0.0:
+                    return None
+                y_mapped = y_world - y0_eff
+                y_map_min = 0.0
+                y_map_max = h_eff
+                used_slice_auto_fallback = True
+                print(
+                    f"[VXPROF_AUTO] step={step} y0_eff={y0_eff:.6g} H_eff={h_eff:.6g} "
+                    f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}]"
+                )
+            else:
+                y0_eff, h_eff, wall_lo, wall_hi = wall_extent
+                y_mapped = y_world - y0_eff
+                y_map_min = 0.0
+                y_map_max = float(h_eff)
+                used_slice_auto_fallback = False
+                print(
+                    f"[VXPROF_WALL] step={step} y0_wall={y0_eff:.6g} H_wall={h_eff:.6g} "
+                    f"y_wall_range=[{wall_lo:.6g},{wall_hi:.6g}]"
+                )
+                in_channel = (y_mapped >= y_map_min) & (y_mapped <= y_map_max)
+                y_mapped = y_mapped[in_channel]
+                vel = vel[in_channel]
+                if y_mapped.size == 0:
+                    return None
+        elif self.cfg.y_extent_mode == "slice_auto":
             y0_eff = float(y_world_min)
             h_eff = float(y_world_max - y_world_min)
             if not np.isfinite(h_eff) or h_eff <= 0.0:
@@ -206,6 +267,7 @@ class VxProfileDiagnostics:
             y_mapped = y_world - y0_eff
             y_map_min = 0.0
             y_map_max = h_eff
+            used_slice_auto_fallback = False
             print(
                 f"[VXPROF_AUTO] step={step} y0_eff={y0_eff:.6g} H_eff={h_eff:.6g} "
                 f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}]"
@@ -222,6 +284,7 @@ class VxProfileDiagnostics:
             vel = vel[in_channel]
             if y_mapped.size == 0:
                 return None
+            used_slice_auto_fallback = False
             print(
                 f"[VXPROF_INFO] step={step} y0={y0_eff:.6g} "
                 f"y_world_range=[{y_world_min:.6g},{y_world_max:.6g}] "
@@ -262,7 +325,12 @@ class VxProfileDiagnostics:
 
         # Robust mode fallback: avoid empty bins in diagnostics by using quantile edges
         # when possible (strict benchmark mode keeps fixed config extents/bins).
-        if self.cfg.y_extent_mode == "slice_auto" and empty_bins > 0 and y_mapped.size >= self.cfg.bins:
+        if (
+            self.cfg.y_extent_mode == "walls"
+            and used_slice_auto_fallback
+            and empty_bins > 0
+            and y_mapped.size >= self.cfg.bins
+        ):
             q = np.linspace(0.0, 1.0, self.cfg.bins + 1, dtype=np.float64)
             q_edges = np.quantile(y_mapped, q)
             # Ensure strictly increasing edges for stable bin membership.
@@ -301,8 +369,18 @@ class VxProfileDiagnostics:
                     ]
                 )
 
+        means_arr = np.asarray(means, dtype=np.float64)
+        counts_arr = np.asarray(counts, dtype=np.int64)
+        self._mean_hist.append(means_arr.copy())
+        self._count_hist.append(counts_arr.copy())
+
         l2, linf = self._errors(means=means, analy=analy, counts=counts)
+        mean_avg = np.mean(np.stack(list(self._mean_hist), axis=0), axis=0)
+        count_sum = np.sum(np.stack(list(self._count_hist), axis=0), axis=0)
+        counts_avg_mask = (count_sum > 0).astype(np.int64).tolist()
+        l2_avg, linf_avg = self._errors(means=mean_avg.tolist(), analy=analy, counts=counts_avg_mask)
         used_bins = int(sum(1 for n in counts if n > 0))
+        used_bins_avg = int(np.count_nonzero(count_sum > 0))
         vmax_analytic = self._vmax_analytic(h=float(y_map_max - y_map_min))
         vmax_measured = float(np.max(np.abs(np.asarray(means, dtype=np.float64)))) if means else 0.0
         print(
@@ -319,6 +397,11 @@ class VxProfileDiagnostics:
             f"[VXERR] step={step} L2={l2:.3e} Linf={linf:.3e} "
             f"empty_bins={empty_bins} used_bins={used_bins}/{self.cfg.bins}"
         )
+        print(
+            f"[VXERR_AVG] step={step} L2={l2_avg:.3e} Linf={linf_avg:.3e} "
+            f"window={len(self._mean_hist)}/{self.cfg.avg_window_steps} "
+            f"used_bins={used_bins_avg}/{self.cfg.bins}"
+        )
 
         return VxProfileSample(
             step=int(step),
@@ -333,6 +416,8 @@ class VxProfileDiagnostics:
             empty_bins=int(empty_bins),
             l2=float(l2),
             linf=float(linf),
+            l2_avg=float(l2_avg),
+            linf_avg=float(linf_avg),
         )
 
     def _resolve_y0(self, y_world_values: np.ndarray) -> float:
@@ -355,6 +440,43 @@ class VxProfileDiagnostics:
         span = y_max - y_min
         margin = float(max(self.cfg.y_margin, 0.02 * span))
         return y_min - margin, y_max + margin
+
+    def _resolve_wall_extent(self, *, state) -> tuple[float, float, float, float] | None:
+        # Prefer explicit/domain-derived bounds prepared at config build.
+        if self.cfg.wall_y0 is not None and self.cfg.wall_h is not None and self.cfg.wall_h > 0.0:
+            lo = float(self.cfg.wall_y0)
+            hi = float(self.cfg.wall_y0 + self.cfg.wall_h)
+            return float(self.cfg.wall_y0), float(self.cfg.wall_h), lo, hi
+
+        # Fallback: infer from boundary particles when available.
+        is_boundary = getattr(state, "is_boundary", None)
+        pos = getattr(state, "pos", None)
+        if is_boundary is None or pos is None:
+            return None
+        if not isinstance(is_boundary, np.ndarray) or is_boundary.size == 0:
+            return None
+        if not np.any(is_boundary):
+            return None
+
+        yb = pos[is_boundary, self.cfg.axis]
+        if yb.size == 0:
+            return None
+        wall_lo = float(np.min(yb))
+        wall_hi = float(np.max(yb))
+        if wall_hi <= wall_lo:
+            return None
+
+        # Optional inward padding to approximate fluid-accessible band.
+        pad = float(self.cfg.wall_padding)
+        y0_wall = wall_lo + pad
+        y1_wall = wall_hi - pad
+        if y1_wall <= y0_wall:
+            y0_wall = wall_lo
+            y1_wall = wall_hi
+        h_wall = float(y1_wall - y0_wall)
+        if h_wall <= 0.0:
+            return None
+        return float(y0_wall), float(h_wall), wall_lo, wall_hi
 
     def _analytic_vx(self, *, y_mapped: float, h: float) -> float:
         gx = float(self.cfg.gx if self.cfg.gx is not None else 0.0)

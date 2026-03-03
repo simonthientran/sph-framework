@@ -8,14 +8,21 @@ This framework can export structured per-step metrics **without parsing stdout**
 bins is selected:
 
 - `config` (default): strict benchmark mode using configured `y0`/`H`
+- `walls`: preferred validation mode using wall/domain extents (`y0_wall`, `H_wall`)
 - `slice_auto`: robust diagnostics mode using the sampled set after x-slice
   filtering (`y0_eff=min(y)`, `H_eff=max(y)-min(y)`)
 
-In `slice_auto` mode, logs include:
+Additional key:
+- `avg_window_steps`: rolling averaging window (in profile-sample steps) used
+  for `[VXERR_AVG]` to reduce transient noise.
 
+Logs include:
+
+- `[VXPROF_WALL] ... y0_wall=... H_wall=... y_wall_range=[...]` (walls mode)
 - `[VXPROF_AUTO] ... y0_eff=... H_eff=... y_world_range=[...]`
-- `[VXANA] ... mode=slice_auto ...`
+- `[VXANA] ... mode=<config|walls|slice_auto> ...`
 - `[VXERR] ... empty_bins=... used_bins=k/total ...`
+- `[VXERR_AVG] ... window=current/avg_window_steps ...`
 
 ### Enable in scene JSON
 
