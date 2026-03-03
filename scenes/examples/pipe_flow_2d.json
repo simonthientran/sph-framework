@@ -56,10 +56,10 @@
     "type": "wcsph",
     "debug_vx_profile": {
       "enable": true,
-      "every": 50,
+      "every": 100,
       "bins": 8,
       "use_x_slice": true,
-      "x_slice_width": 0.08,
+      "x_slice_width": 0.25,
       "axis": 1,
       "component": 0,
       "y_extent_mode": "walls",
