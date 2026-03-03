@@ -380,8 +380,6 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     # boundary particles remain static by construction (not integrated)
     state.vel[state.is_boundary] = 0.0
 
-    # Domain boundaries are now handled externally by BoundaryManager in bootstrap.py
-
     return dt
 
 
@@ -391,6 +389,7 @@ def step_simulation(
     particle_size: float,
     solver_cfg_dict: dict,
     step_idx: int | None = None,
+    enforce_domain_constraints: bool = True,
 ) -> float:
     """
     Dispatch simulation step based on scene solver configuration.
@@ -407,13 +406,16 @@ def step_simulation(
     solver_type = str(solver_cfg_dict.get("type", "wcsph")).lower()
 
     if solver_type == "wcsph":
-        return step_wcsph_algorithm1_with_boundaries(state=state, cfg=cfg, particle_size=particle_size)
+        dt = step_wcsph_algorithm1_with_boundaries(state=state, cfg=cfg, particle_size=particle_size)
+        if enforce_domain_constraints:
+            enforce_domain_boundary_constraints(state, cfg)
+        return dt
 
     if solver_type == "pcisph":
         # Lazy import avoids circular imports and keeps WCSPH unaffected.
         from sph.solver.pcisph import step_pcisph_with_boundaries
 
-        max_iters = int(solver_cfg_dict.get("max_iters", 8))
+        max_iters = int(solver_cfg_dict.get("max_iters", solver_cfg_dict.get("max_iter", 8)))
         density_tol = float(solver_cfg_dict.get("density_tol", 0.01))
         warm_start_pressure = bool(solver_cfg_dict.get("warm_start_pressure", True))
         # ------------------------------------------------------------------
@@ -449,6 +451,13 @@ def step_simulation(
         force_active_rho_min = solver_cfg_dict.get("force_active_rho_min", None)
         force_active_rho_min = float(force_active_rho_min) if force_active_rho_min is not None else None
         debug_fixed_dt = bool(solver_cfg_dict.get("debug_fixed_dt", False))
+        adaptive_dt = bool(solver_cfg_dict.get("adaptive_dt", True))
+        density_tol_max = solver_cfg_dict.get("density_tol_max", None)
+        density_tol_max = float(density_tol_max) if density_tol_max is not None else None
+        dt_visc_safety = float(solver_cfg_dict.get("dt_visc_safety", 0.125))
+        dt_force_safety = float(solver_cfg_dict.get("dt_force_safety", 0.25))
+        stabilize_rho_mean = bool(solver_cfg_dict.get("stabilize_rho_mean", False))
+        stabilize_rho_mean_clip = float(solver_cfg_dict.get("stabilize_rho_mean_clip", 0.02))
         debug = bool(solver_cfg_dict.get("debug", False))
         debug_dump_on_step = solver_cfg_dict.get("debug_dump_on_step", None)
         debug_dump_on_step = int(debug_dump_on_step) if debug_dump_on_step is not None else None
@@ -471,9 +480,16 @@ def step_simulation(
             force_active_if_density_low=force_active_if_density_low,
             force_active_rho_min=force_active_rho_min,
             debug_fixed_dt=debug_fixed_dt,
+            adaptive_dt=adaptive_dt,
+            density_tol_max=density_tol_max,
+            dt_visc_safety=dt_visc_safety,
+            dt_force_safety=dt_force_safety,
+            stabilize_rho_mean=stabilize_rho_mean,
+            stabilize_rho_mean_clip=stabilize_rho_mean_clip,
             debug=debug,
             debug_dump_on_step=debug_dump_on_step,
             step_idx=step_idx,
+            enforce_domain_constraints=enforce_domain_constraints,
         )
 
     raise ValueError(f"Unknown solver type: {solver_type!r}")

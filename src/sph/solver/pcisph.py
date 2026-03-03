@@ -39,14 +39,27 @@ from sph.sph.kernels import cubic_spline_W, cubic_spline_gradW
 # Module-level cache for kPCI.
 #
 # The prompt explicitly allows computing kPCI "once per step (or once at start)".
-# We compute it once at the first PCISPH step and reuse it to improve numerical
-# robustness when dt changes due to CFL (Eq. (33)). This does not affect WCSPH.
+# We compute/store a global scalar using dt_fixed to keep correction gain stable
+# under adaptive integration dt changes.
 #
 _KPCI_CACHE: dict[tuple[int, float, float, float, float], float] = {}
 
 # Optional per-state cache for active-set hysteresis (control logic only).
 # Keyed by id(state) to avoid modifying ParticleState (which uses slots=True).
 _UNDER_NEIGHBOR_STREAK_CACHE: dict[int, np.ndarray] = {}
+_LAST_STEP_STATS_CACHE: dict[int, dict[str, float | int]] = {}
+
+
+def get_last_step_stats(state: ParticleState) -> dict[str, float | int] | None:
+    """
+    Best-effort observability hook for PCISPH step metrics.
+
+    Returns the last cached step stats for the given state instance.
+    """
+    cached = _LAST_STEP_STATS_CACHE.get(int(id(state)))
+    if cached is None:
+        return None
+    return dict(cached)
 
 
 def _inactive_mask_with_hold_steps(
@@ -531,9 +544,16 @@ def step_pcisph_with_boundaries(
     force_active_if_density_low: bool = True,
     force_active_rho_min: float | None = None,
     debug_fixed_dt: bool = False,
+    adaptive_dt: bool = True,
+    density_tol_max: float | None = None,
+    dt_visc_safety: float = 0.125,
+    dt_force_safety: float = 0.25,
+    stabilize_rho_mean: bool = False,
+    stabilize_rho_mean_clip: float = 0.02,
     debug: bool = False,
     debug_dump_on_step: int | None = None,
     step_idx: int | None = None,
+    enforce_domain_constraints: bool = True,
 ) -> float:
     """
     Perform one PCISPH step with static boundary particles.
@@ -638,12 +658,24 @@ def step_pcisph_with_boundaries(
     inactive_count = int(inactive_ids.size)
 
     # (2) dt selection:
-    # - Normally: same policy as WCSPH (CFL Eq. (33) or fixed)
-    # - Debug mode: force fixed dt to isolate PCISPH correctness from CFL feedback
+    # - Debug mode: force fixed dt to isolate solver behavior.
+    # - Otherwise use adaptive min(dt_cfl, dt_visc, dt_force, dt_max), clamped to dt_min.
+    dt_cfl = _compute_dt_eq33(cfg, v_fluid=state.vel[fluid_ids], particle_size=float(particle_size))
+    dt_visc = float("inf")
+    if bool(cfg.enable_viscosity) and float(cfg.kinematic_viscosity) > 0.0:
+        dt_visc = float(dt_visc_safety) * (float(particle_size) ** 2) / float(cfg.kinematic_viscosity)
+    dt_force = float("inf")
+    g_norm = float(np.linalg.norm(cfg.g))
+    if g_norm > 1e-12:
+        dt_force = float(dt_force_safety) * np.sqrt(float(particle_size) / g_norm)
+
     if bool(debug_fixed_dt):
         dt = float(cfg.dt_fixed)
+    elif bool(adaptive_dt):
+        dt = float(min(dt_cfl, dt_visc, dt_force, float(cfg.dt_max)))
+        dt = float(np.clip(dt, float(cfg.dt_min), float(cfg.dt_max)))
     else:
-        dt = _compute_dt_eq33(cfg, v_fluid=state.vel[fluid_ids], particle_size=float(particle_size))
+        dt = float(dt_cfl)
 
     # (3) non-pressure acceleration a_nonp: external body force only (gravity)
     a_nonp = np.zeros((n, dim), dtype=np.float64)
@@ -698,20 +730,10 @@ def step_pcisph_with_boundaries(
 
     # (58) kPCI: compute as a global constant.
     #
-    # The prompt notes kPCI is commonly computed once using a template particle
-    # with perfect sampling, and for our implementation allows "once per step
-    # (or once at start)" with a single global scalar.
+    # We use cfg.dt_fixed in Eq. (58) and Eq. (60) correction scaling to avoid
+    # gain swings when adaptive dt shrinks/expands between steps.
     #
-    # IMPORTANT for stability under variable dt (CFL Eq. (33)):
-    # Eq. (58) includes dt^2 in the denominator. If dt shrinks due to CFL,
-    # recomputing kPCI with the smaller dt makes kPCI grow ~ 1/dt^2 and can
-    # create a runaway feedback loop (large pressure -> large v -> smaller dt -> larger kPCI).
-    #
-    # To follow the "global constant" intent and avoid dt-feedback, we compute
-    # kPCI using the scene's fixed dt (cfg.dt_fixed) and cache it.
-    # This keeps the PCISPH pressure solver scale consistent across steps.
-    #
-    # Cache key: (dim, h, rho0, template_mass, dt_kpci)
+    # Cache key: (dim, h, rho0, template_mass, dt_fixed)
     i_template = _choose_template_particle(fluid_ids=fluid_ids, ns=ns, pos=state.pos)
     dt_kpci = float(cfg.dt_fixed)
     cache_key = (int(state.dim), float(h), float(cfg.rho0), float(state.mass[i_template]), dt_kpci)
@@ -733,6 +755,7 @@ def step_pcisph_with_boundaries(
     #     BUT only for active_ids (see active-set selection above).
     max_iters = int(max_iters)
     density_tol = float(density_tol)
+    density_tol_max_val = float(density_tol_max) if density_tol_max is not None else float(density_tol)
 
     # Pressure warm-start (initial guess) for the per-step PCISPH iteration.
     #
@@ -873,11 +896,10 @@ def step_pcisph_with_boundaries(
 
     iters_used = 0
     avg_err_final = float("nan")
+    max_err_final = float("nan")
     if active_ids.size > 0:
-        # dt-consistency fix:
-        # kPCI is computed/cached using dt_kpci (= cfg.dt_fixed). To avoid mixing gains,
-        # we use the same dt_kpci inside the pressure-correction density update Eq. (60).
-        # Predictor/integration still use the regular dt (CFL/fixed), unchanged.
+        # dt-consistency:
+        # Eq. (58) and Eq. (60) must use the same dt scale as the current step.
         dt_corr = float(dt_kpci)
         for it in range(1, max_iters + 1):
             # Eq. (53): use rho0 in denominators for the pressure solve loop.
@@ -918,9 +940,15 @@ def step_pcisph_with_boundaries(
                     np.abs((rho_star[active_ids] + rho_p[active_ids] - float(cfg.rho0)) / float(cfg.rho0))
                 )
             )
+            max_err = float(
+                np.max(
+                    np.abs((rho_star[active_ids] + rho_p[active_ids] - float(cfg.rho0)) / float(cfg.rho0))
+                )
+            )
             iters_used = it
             avg_err_final = avg_err
-            if avg_err < density_tol:
+            max_err_final = max_err
+            if avg_err < density_tol and max_err < density_tol_max_val:
                 break
     if bool(debug):
         if debug_neigh_counts is None or debug_rho_star_err_avg is None:
@@ -984,6 +1012,7 @@ def step_pcisph_with_boundaries(
         print(
             f"[PCISPH] step={step_idx} "
             f"dt={dt:.3e} (debug_fixed_dt={bool(debug_fixed_dt)}) "
+            f"dt_parts(cfl/visc/force)={float(dt_cfl):.3e}/{float(dt_visc):.3e}/{float(dt_force):.3e} "
             f"dt_corr={float(dt_kpci):.3e} "
             f"clamp_neg_p_iter={bool(clamp_negative_pressure_iter)} "
             f"neg_p_mode={str(negative_pressure_mode).lower()} "
@@ -998,6 +1027,7 @@ def step_pcisph_with_boundaries(
             f"rho*_err_avg={float(debug_rho_star_err_avg):.3e} "
             f"iters_used={int(iters_used)}/{int(max_iters)} "
             f"avg_err_after_iter={float(avg_err_final):.3e} "
+            f"max_err_after_iter_stop={float(max_err_final):.3e} "
             f"max_err_after_iter={float(max_err_after_iter):.3e} "
             f"rho*(min/avg/max)={rho_star_min:.3e}/{rho_star_mean:.3e}/{rho_star_max:.3e} "
             f"rho*_below0p8={int(below_0p8)} "
@@ -1064,6 +1094,20 @@ def step_pcisph_with_boundaries(
     if inactive_ids.size:
         rho_final[inactive_ids] = float(cfg.rho0)
 
+    # Optional post-solve mean-density recentering (control logic only).
+    #
+    # Motivation: for long PCISPH runs with active-set/outlier handling, the global
+    # fluid mean density can drift slightly even when the pressure loop remains stable.
+    # This hook recenters rho_mean toward rho0 with a bounded shift, without altering
+    # solver equations (51/53/57/58/59/60) or particle integration.
+    if bool(stabilize_rho_mean) and fluid_ids.size:
+        rho_mean = float(np.mean(rho_final[fluid_ids]))
+        delta = float(cfg.rho0) - rho_mean
+        clip_abs = abs(float(stabilize_rho_mean_clip)) * float(cfg.rho0)
+        if clip_abs > 0.0:
+            delta = float(np.clip(delta, -clip_abs, clip_abs))
+        rho_final[fluid_ids] = np.maximum(rho_final[fluid_ids] + delta, 1e-12)
+
     # Final Eq. (53) application consistent with the active set:
     # - active_ids: Eq. (53)
     # - inactive_ids: a_p_final = 0
@@ -1086,12 +1130,23 @@ def step_pcisph_with_boundaries(
     # boundary remains static
     state.vel[state.is_boundary] = 0.0
 
-    # Domain boundaries are now handled externally by BoundaryManager in bootstrap.py
-    # to support custom boundary types (Wall, Inflow, Outflow).
+    # Enforce domain boundaries (collision)
+    if enforce_domain_constraints:
+        enforce_domain_boundary_constraints(state, cfg, debug=bool(debug))
 
     # Store final p/rho for observability (read by diagnostics/export).
     state.p[:] = p
     state.rho[:] = rho_final
+    _LAST_STEP_STATS_CACHE[int(id(state))] = {
+        "iters_used": int(iters_used),
+        "max_iters": int(max_iters),
+        "rho_err_avg": float(avg_err_final),
+        "rho_err_max": float(max_err_final),
+        "dt": float(dt),
+        "dt_cfl": float(dt_cfl),
+        "dt_visc": float(dt_visc),
+        "dt_force": float(dt_force),
+    }
 
     return float(dt)
 

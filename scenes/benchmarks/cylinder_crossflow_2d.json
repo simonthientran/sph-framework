@@ -47,7 +47,7 @@
         "cfl": 0.4,
         "dt_min": 1e-5,
         "dt_max": 5e-4,
-        "steps": 1000,
+        "steps": 500,
         "log_every": 50
     },
     "boundaries": [
@@ -86,6 +86,10 @@
             "max": [
                 6.0,
                 2.0
+            ],
+            "faces": [
+                "ymin",
+                "ymax"
             ],
             "slip_mode": "no-slip",
             "restitution": 0.0

@@ -1,31 +1,27 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
-    from sph.core.state import ParticleState
     from sph.core.simulator import SimConfig
+    from sph.core.state import ParticleState
+
 
 class BoundaryBase:
     """
-    Base interface for all boundaries in the SPH framework.
-    """
-    def pre_step(self, state: ParticleState, dt: float) -> None:
-        """
-        Called before the solver step. 
-        Useful for spawning particles, setting initial inflow velocity, etc.
-        """
-        pass
+    Boundary lifecycle hook interface.
 
-    def apply_walls(self, state: ParticleState, cfg: SimConfig, debug: bool = False) -> None:
-        """
-        Called after the integration step to enforce structural boundaries 
-        (like wall push-out/reflection).
-        """
-        pass
+    Boundaries are executed by `BoundaryManager` in this strict order:
+    1) `pre_step`     -> prepare inflow / source terms before solver integration.
+    2) `apply_walls`  -> apply geometric constraints after integration.
+    3) `post_step`    -> cleanup/removal after wall handling.
+    """
+
+    def pre_step(self, state: ParticleState, dt: float) -> None:
+        return
+
+    def apply_walls(self, state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
+        return
 
     def post_step(self, state: ParticleState) -> None:
-        """
-        Called at the very end of the time step.
-        Useful for cleaning up particles (like outflow teleportation).
-        """
-        pass
+        return

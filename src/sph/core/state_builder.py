@@ -1,40 +1,8 @@
 from __future__ import annotations
 
-import json
-import time
-
 import numpy as np
 
 from sph.core.state import ParticleState
-
-
-# region agent log
-def _agent_log(hypothesis_id: str, message: str, data: dict) -> None:
-    """
-    Lightweight debug logger for the AI agent.
-
-    Writes one NDJSON line per call to the shared debug log file. This is
-    purely for instrumentation and does not affect any physics or algorithms.
-    """
-    try:
-        entry = {
-            "id": f"log_{int(time.time() * 1000)}",
-            "timestamp": int(time.time() * 1000),
-            "location": "sph/core/state_builder.py",
-            "message": message,
-            "data": data,
-            "runId": "pre-fix",
-            "hypothesisId": hypothesis_id,
-        }
-        with open("/home/simon/projects/sph-framework/.cursor/debug.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception:
-        # Logging must never interfere with the simulation or tests.
-        pass
-
-
-_agent_log("H1", "module_imported", {})
-# endregion
 
 
 def _grid_points_2d(pmin: np.ndarray, pmax: np.ndarray, spacing: float) -> np.ndarray:
@@ -178,14 +146,6 @@ def spawn_fluid_block_in_channel(
 
 
 def build_scene_state(scene: dict) -> ParticleState:
-    # region agent log
-    _agent_log(
-        "H1",
-        "build_scene_state_called",
-        {"keys": sorted(list(scene.keys()))},
-    )
-    # endregion
-
     meta = scene["meta"]
     dim = int(meta["dimensions"])
     if dim != 2:

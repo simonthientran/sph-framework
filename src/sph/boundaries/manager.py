@@ -1,31 +1,33 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Iterable
+
 from sph.boundaries.base import BoundaryBase
 
 if TYPE_CHECKING:
-    from sph.core.state import ParticleState
     from sph.core.simulator import SimConfig
+    from sph.core.state import ParticleState
+
 
 class BoundaryManager:
     """
-    Coordinates execution of all boundaries during the simulation loop.
-    Maintains order of boundary operations: pre_step, apply_walls, post_step.
+    Coordinates boundary execution order for a simulation step.
     """
-    def __init__(self, boundaries: List[BoundaryBase] = None):
-        self.boundaries = boundaries if boundaries is not None else []
-        
-    def add_boundary(self, boundary: BoundaryBase):
+
+    def __init__(self, boundaries: Iterable[BoundaryBase] | None = None):
+        self.boundaries: list[BoundaryBase] = list(boundaries or [])
+
+    def add_boundary(self, boundary: BoundaryBase) -> None:
         self.boundaries.append(boundary)
 
     def pre_step(self, state: ParticleState, dt: float) -> None:
-        for b in self.boundaries:
-            b.pre_step(state, dt)
+        for boundary in self.boundaries:
+            boundary.pre_step(state, dt)
 
-    def apply_walls(self, state: ParticleState, cfg: SimConfig, debug: bool = False) -> None:
-        for b in self.boundaries:
-            b.apply_walls(state, cfg, debug)
+    def apply_walls(self, state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
+        for boundary in self.boundaries:
+            boundary.apply_walls(state, cfg, debug=debug)
 
     def post_step(self, state: ParticleState) -> None:
-        for b in self.boundaries:
-            b.post_step(state)
+        for boundary in self.boundaries:
+            boundary.post_step(state)

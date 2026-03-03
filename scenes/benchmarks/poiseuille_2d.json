@@ -1,72 +1,116 @@
 {
-    "name": "Poiseuille 2D Benchmark",
-    "solver": {
-        "type": "pcisph",
-        "max_iter": 5
+  "meta": {
+    "name": "poiseuille_2d_periodic",
+    "dimensions": 2,
+    "description": "2D periodic-x channel Poiseuille quality gate (single-phase)"
+  },
+  "domain": {
+    "type": "channel",
+    "min": [0.0, 0.0],
+    "max": [0.8, 0.2],
+    "boundary_layers": 3,
+    "boundary_walls": ["ymin", "ymax"],
+    "periodic_axes": ["x"]
+  },
+  "boundary": {
+    "eps": 2.0e-06,
+    "restitution": 0.0,
+    "friction": 1.0
+  },
+  "fluid": {
+    "type": "channel_fill",
+    "spacing": 0.02,
+    "padding": 0.0,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "support_radius": 0.04
+  },
+  "forces": {
+    "gravity": [0.0, 0.0],
+    "body_force": [0.1, 0.0]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "k": 2000.0
     },
-    "fluid": {
-        "type": "channel_fill",
-        "spacing": 0.02,
-        "rho0": 1000.0,
-        "eos_k": 3.0,
-        "viscosity": 0.001
-    },
-    "material": {
-        "rho0": 1000.0,
-        "viscosity": {
-            "enable": true,
-            "nu": 0.001
-        }
-    },
-    "neighbors": {
-        "support_radius": 0.04
-    },
-    "meta": {
-        "dimensions": 2
-    },
-    "domain": {
-        "min": [
-            -0.5,
-            -0.5,
-            -0.01
-        ],
-        "max": [
-            0.5,
-            0.5,
-            0.01
-        ]
-    },
-    "boundary": {
-        "walls": {
-            "type": "wall",
-            "no_slip": true
-        },
-        "inflow": {
-            "type": "inflow",
-            "velocity": [
-                1.0,
-                0.0,
-                0.0
-            ]
-        },
-        "outflow": {
-            "type": "outflow",
-            "thickness": 0.05
-        }
-    },
-    "time": {
-        "steps": 2000,
-        "dt": 5e-4,
-        "cfl": true
-    },
-    "metrics": {
-        "profile": "poiseuille",
-        "interval": 100,
-        "dpdx": -10.0,
-        "mu": 0.001
-    },
-    "export": {
-        "every_n": 200,
-        "output_dir": "out/poiseuille_2d"
+    "viscosity": {
+      "enable": true,
+      "nu": 0.002
     }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.35,
+    "dt_min": 1.0e-05,
+    "dt_max": 2.0e-04,
+    "dt_fixed": 1.5e-04,
+    "steps": 1500,
+    "log_every": 25
+  },
+  "solver": {
+    "type": "pcisph",
+    "max_iters": 40,
+    "density_tol": 0.006,
+    "density_tol_max": 0.015,
+    "adaptive_dt": true,
+    "dt_visc_safety": 0.125,
+    "dt_force_safety": 0.25,
+    "stabilize_rho_mean": true,
+    "stabilize_rho_mean_clip": 0.01,
+    "negative_pressure_mode": "hard_zero",
+    "clamp_negative_pressure_iter": true,
+    "min_neighbors_for_pressure": 8,
+    "adaptive_min_neighbors_for_pressure": true,
+    "active_neighbor_ratio": 0.7,
+    "min_neighbors_floor": 5,
+    "inactive_hold_steps": 2,
+    "force_active_if_density_low": true,
+    "force_active_rho_min": 960.0,
+    "debug_fixed_dt": false,
+    "debug_vx_profile": {
+      "enable": true,
+      "every": 50,
+      "bins": 12,
+      "x_window": 0.08
+    }
+  },
+  "metrics": {
+    "enable": true,
+    "out_dir": "out",
+    "every": 25,
+    "profiles": [
+      {
+        "name": "mid_x",
+        "min": [0.38, 0.0],
+        "max": [0.42, 0.2],
+        "axis": 1,
+        "bins": 12
+      }
+    ]
+  },
+  "poiseuille_diagnostics": {
+    "enable": true,
+    "every": 25,
+    "out_file": "out/poiseuille_2d/poiseuille_profile.csv",
+    "bins": 12,
+    "axis": 1,
+    "component": 0,
+    "sample_min": [0.38, 0.0],
+    "sample_max": [0.42, 0.2],
+    "channel_min": 0.0,
+    "channel_max": 0.2,
+    "drive_mode": "body_force",
+    "drive_component": 0
+  },
+  "export": {
+    "results": {
+      "enable": true,
+      "out_dir": "out/poiseuille_2d",
+      "base_name": "run",
+      "formats": ["csv", "xlsx"],
+      "every": 50
+    }
+  }
 }

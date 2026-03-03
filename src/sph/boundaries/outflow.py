@@ -1,49 +1,72 @@
 from __future__ import annotations
+
 import numpy as np
 
 from sph.boundaries.base import BoundaryBase
 
+_INACTIVE_BASE = 1e9
+
+
 class OutflowBoundary(BoundaryBase):
     """
-    Removes particles entering a designated AABB. Removed particles
-    are ported outside the domain (e.g., x=1e9) and become inactive pool members.
+    Open outflow with light sponge damping + particle removal region.
     """
-    def __init__(self, region_min: list[float], region_max: list[float]):
-        self.region_min = np.array(region_min, dtype=np.float64)
-        self.region_max = np.array(region_max, dtype=np.float64)
-        self.teleport_pos = 1e9
+
+    def __init__(
+        self,
+        region_min: list[float],
+        region_max: list[float],
+        *,
+        sponge_strength: float = 0.15,
+    ):
+        self.region_min = np.asarray(region_min, dtype=np.float64)
+        self.region_max = np.asarray(region_max, dtype=np.float64)
+        self.sponge_strength = float(max(0.0, min(1.0, sponge_strength)))
+        self._removed_total = 0
+
+    @property
+    def removed_total(self) -> int:
+        return int(self._removed_total)
+
+    def pre_step(self, state, dt: float) -> None:
+        # Sponge zone: gently damp pressure for particles already inside outflow box.
+        fluid_ids = state.fluid_indices
+        if fluid_ids.size == 0:
+            return
+        pos = state.pos[fluid_ids]
+        active = pos[:, 0] < 1e8
+        if not np.any(active):
+            return
+        ids = fluid_ids[active]
+        apos = state.pos[ids]
+        mask = np.all((apos >= self.region_min) & (apos <= self.region_max), axis=1)
+        if np.any(mask):
+            sid = ids[mask]
+            state.p[sid] *= (1.0 - self.sponge_strength)
 
     def post_step(self, state) -> None:
         fluid_ids = state.fluid_indices
         if fluid_ids.size == 0:
             return
-
         pos = state.pos[fluid_ids]
-        
-        # Find particles in the outflow region
-        in_region = (pos >= self.region_min) & (pos <= self.region_max)
-        in_region_mask = np.all(in_region, axis=1)
-        active_mask = pos[:, 0] < 1e8
-        to_remove = in_region_mask & active_mask
-        
-        if np.any(to_remove):
-            remove_ids = fluid_ids[to_remove]
-            
-            # Teleport outside active area
-            # Put them far away and zero velocity
-            n_remove = remove_ids.size
-            dim = state.dim
-            
-            # Spread them slightly in the inactive pool to avoid degenerate bounds
-            # if someone does an AABB on all particles
-            inactive_pos = np.zeros((n_remove, dim), dtype=np.float64)
-            inactive_pos[:, 0] = self.teleport_pos + np.arange(n_remove)
-            if dim > 1:
-                inactive_pos[:, 1] = self.teleport_pos
-            if dim > 2:
-                inactive_pos[:, 2] = self.teleport_pos
+        active = pos[:, 0] < 1e8
+        if not np.any(active):
+            return
+        active_ids = fluid_ids[active]
+        apos = state.pos[active_ids]
+        in_region = np.all((apos >= self.region_min) & (apos <= self.region_max), axis=1)
+        if not np.any(in_region):
+            return
 
-            state.pos[remove_ids] = inactive_pos
-            state.vel[remove_ids] = 0.0
-            state.acc[remove_ids] = 0.0
-            state.p[remove_ids] = 0.0
+        remove_ids = active_ids[in_region]
+        n_remove = int(remove_ids.size)
+        dim = state.dim
+        inactive_pos = np.full((n_remove, dim), _INACTIVE_BASE, dtype=np.float64)
+        inactive_pos[:, 0] = _INACTIVE_BASE + np.arange(self._removed_total, self._removed_total + n_remove)
+        self._removed_total += n_remove
+
+        state.pos[remove_ids] = inactive_pos
+        state.vel[remove_ids] = 0.0
+        state.acc[remove_ids] = 0.0
+        state.p[remove_ids] = 0.0
+        state.rho[remove_ids] = 0.0
