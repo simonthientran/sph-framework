@@ -1,0 +1,78 @@
+{
+  "meta": {
+    "name": "pipe_flow_1phase_2d",
+    "version": 1,
+    "seed": 0,
+    "dimensions": 2
+  },
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0],
+    "max": [2.0, 0.2],
+    "boundary_layers": 3
+  },
+  "fluid": {
+    "type": "block",
+    "min": [0.1, 0.03],
+    "max": [1.9, 0.17],
+    "spacing": 0.01,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.045
+  },
+  "forces": {
+    "gravity": [0.1, 0.0]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 500.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1e-05,
+    "dt_max": 0.0005,
+    "dt_fixed": 0.0005,
+    "steps": 100,
+    "log_every": 10
+  },
+  "solver": {
+    "type": "pcisph",
+    "max_iters": 12,
+    "density_tol": 0.005,
+    "clamp_negative_pressure": true
+  },
+  "debug": {
+    "vx_profile": {
+      "enable": true,
+      "y_extent_mode": "walls_inner",
+      "n_bins": 8,
+      "csv": {
+        "enable": true,
+        "every": 50,
+        "dir": "out/vx_profile"
+      }
+    }
+  },
+  "export": {
+    "csv": {
+      "enable": false,
+      "every": 10,
+      "dir": "out/csv"
+    },
+    "vtk": {
+      "enable": false,
+      "every": 10,
+      "dir": "out/vtk"
+    }
+  }
+}

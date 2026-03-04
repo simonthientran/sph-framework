@@ -35,6 +35,11 @@ import numpy as np
 from sph.core.diagnostics import compute_step_diagnostics
 from sph.core.simulator import SimConfig, step_simulation
 from sph.core.state_builder import build_scene_state
+from sph.core.vx_profile import (
+    compute_vx_profile,
+    export_vx_profile_csv,
+    format_vx_profile_log_line,
+)
 from sph.io.csv_export import export_particles_csv
 from sph.io.vtk_export import export_particles_vtk_legacy
 from sph.neighbors.spatial_hash import SpatialHash
@@ -90,6 +95,11 @@ def main() -> int:
         domain_min = np.array(domain_cfg["min"], dtype=np.float64)
         domain_max = np.array(domain_cfg["max"], dtype=np.float64)
 
+    # Viscosity from scene (for solver and vx_profile analytic vmax)
+    visc_cfg = scene.get("material", {}).get("viscosity", {})
+    enable_viscosity = bool(visc_cfg.get("enable", False))
+    kinematic_viscosity = float(visc_cfg.get("nu", 0.0))
+
     cfg = SimConfig(
         support_radius=h,
         rho0=rho0,
@@ -100,9 +110,8 @@ def main() -> int:
         dt_max=float(time_cfg.get("dt_max", 5e-4)),
         dt_fixed=float(time_cfg.get("dt_fixed", 5e-4)),
         use_cfl=bool(use_cfl),
-        # viscosity fields are optional in SimConfig and default to disabled
-        enable_viscosity=False,
-        kinematic_viscosity=0.0,
+        enable_viscosity=enable_viscosity,
+        kinematic_viscosity=kinematic_viscosity,
         # domain collision
         domain_min=domain_min,
         domain_max=domain_max,
@@ -131,6 +140,26 @@ def main() -> int:
     vtk_enabled = bool(vtk_cfg.get("enable", False))
     vtk_every = int(vtk_cfg.get("every", 10))
     vtk_dir = Path(vtk_cfg.get("dir", "out/vtk"))
+
+    # Vx-profile debug (optional): scene.debug.vx_profile.enable, y_extent_mode, n_bins, gx, nu
+    debug_cfg = scene.get("debug", {})
+    vx_profile_cfg = debug_cfg.get("vx_profile", {})
+    vx_profile_enabled = bool(vx_profile_cfg.get("enable", False))
+    vx_profile_mode = str(vx_profile_cfg.get("y_extent_mode", "walls_inner"))
+    vx_profile_n_bins = int(vx_profile_cfg.get("n_bins", 8))
+    vx_profile_gx = vx_profile_cfg.get("gx", None)
+    if vx_profile_gx is not None:
+        vx_profile_gx = float(vx_profile_gx)
+    else:
+        vx_profile_gx = float(g[0]) if dim >= 1 else 0.0
+    vx_profile_nu = vx_profile_cfg.get("nu", None)
+    if vx_profile_nu is not None:
+        vx_profile_nu = float(vx_profile_nu)
+    else:
+        vx_profile_nu = kinematic_viscosity if enable_viscosity else None
+    vx_profile_csv_enabled = bool(vx_profile_cfg.get("csv", {}).get("enable", False))
+    vx_profile_csv_every = int(vx_profile_cfg.get("csv", {}).get("every", 10))
+    vx_profile_csv_dir = Path(vx_profile_cfg.get("csv", {}).get("dir", "out/vx_profile"))
 
     # Export step 0000 if enabled (pre-step snapshot)
     if csv_enabled:
@@ -173,6 +202,23 @@ def main() -> int:
                 f"p(min/avg/max)={diag.p_min:.2f}/{diag.p_mean:.2f}/{diag.p_max:.2f} "
                 f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}"
             )
+
+        if vx_profile_enabled and ((s == 0) or ((s + 1) % max(1, log_every) == 0)):
+            vx_result = compute_vx_profile(
+                step=diag.step,
+                state=state,
+                scene=scene,
+                y_extent_mode=vx_profile_mode,
+                n_bins=vx_profile_n_bins,
+                gx=vx_profile_gx,
+                nu=vx_profile_nu,
+            )
+            print(f"[STEP {diag.step:04d}] {format_vx_profile_log_line(vx_result)}")
+            if vx_profile_csv_enabled and ((s + 1) % max(1, vx_profile_csv_every) == 0):
+                export_vx_profile_csv(
+                    vx_profile_csv_dir / f"vx_profile_step_{diag.step:04d}.csv",
+                    vx_result,
+                )
 
         if csv_enabled and ((s + 1) % max(1, csv_every) == 0):
             export_particles_csv(csv_dir / f"particles_step_{diag.step:04d}.csv", state)
