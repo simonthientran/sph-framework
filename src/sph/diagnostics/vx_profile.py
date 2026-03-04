@@ -20,6 +20,7 @@ class VxProfileConfig:
     component: int
     use_x_slice: bool
     x_mid: float | None
+    x_slice_center: float | None
     x_slice_width: float
     y_min: float | None
     y_max: float | None
@@ -83,7 +84,8 @@ def build_vx_profile_config(
     has_legacy_window = legacy_x_window is not None
     use_x_slice = bool(cfg.get("use_x_slice", has_legacy_window))
     x_slice_width = float(cfg.get("x_slice_width", legacy_x_window if has_legacy_window else 2.0 * support_radius))
-    x_mid_val = cfg.get("x_mid", None)
+    # New preferred key: x_slice_center. Keep x_mid for backwards compatibility.
+    x_mid_val = cfg.get("x_slice_center", cfg.get("x_mid", None))
     x_mid = float(x_mid_val) if x_mid_val is not None else None
 
     y_min = float(cfg["y_min"]) if "y_min" in cfg else None
@@ -151,6 +153,7 @@ def build_vx_profile_config(
         component=component,
         use_x_slice=use_x_slice,
         x_mid=x_mid,
+        x_slice_center=x_mid,
         x_slice_width=float(max(x_slice_width, 0.0)),
         y_min=y_min,
         y_max=y_max,
@@ -223,6 +226,13 @@ class VxProfileDiagnostics:
             vel = vel[m]
             if pos.size == 0:
                 return None
+            # Diagnostic: y-range inside x-slice after filtering.
+            y_slice = pos[:, self.cfg.axis]
+            print(
+                f"[VXSLICE] step={step} x_center={float(self.cfg.x_mid):.6g} "
+                f"x_width={float(self.cfg.x_slice_width):.6g} "
+                f"n={int(y_slice.size)} y_range=[{float(np.min(y_slice)):.6g},{float(np.max(y_slice)):.6g}]"
+            )
 
         y_world = pos[:, self.cfg.axis]
         y_world_min = float(np.min(y_world))
@@ -355,6 +365,12 @@ class VxProfileDiagnostics:
             for b in range(self.cfg.bins):
                 vx_analytic = self._analytic_vx(y_mapped=float(centers[b]), h=float(y_map_max - y_map_min))
                 analy.append(vx_analytic)
+                yb0 = float(edges[b])
+                yb1 = float(edges[b + 1])
+                print(
+                    f"[VXBIN] step={step} b={b} y=[{yb0:.6g},{yb1:.6g}] "
+                    f"n={int(counts[b])} mean_vx={float(means[b]):.3e} vmax={float(vmaxs[b]):.3e}"
+                )
                 w.writerow(
                     [
                         int(step),
@@ -397,6 +413,23 @@ class VxProfileDiagnostics:
             f"[VXERR] step={step} L2={l2:.3e} Linf={linf:.3e} "
             f"empty_bins={empty_bins} used_bins={used_bins}/{self.cfg.bins}"
         )
+        if empty_bins > 0:
+            if self.cfg.y_extent_mode == "walls":
+                requested_y0 = float(y0_eff)
+                requested_y1 = float(y0_eff + (y_map_max - y_map_min))
+                slice_y0 = float(np.min(y_world))
+                slice_y1 = float(np.max(y_world))
+                print(
+                    f"[VXHINT] step={step} empty_bins={empty_bins}: "
+                    f"No particles in this y range within x-slice. "
+                    f"slice_y_range=[{slice_y0:.6g},{slice_y1:.6g}] "
+                    f"requested_wall_y_range=[{requested_y0:.6g},{requested_y1:.6g}]"
+                )
+            else:
+                print(
+                    f"[VXHINT] step={step} empty_bins={empty_bins}: "
+                    f"No particles in this y range within x-slice."
+                )
         print(
             f"[VXERR_AVG] step={step} L2={l2_avg:.3e} Linf={linf_avg:.3e} "
             f"window={len(self._mean_hist)}/{self.cfg.avg_window_steps} "
