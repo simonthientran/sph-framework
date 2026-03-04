@@ -46,20 +46,20 @@
     "log_every": 10
   },
   "solver": {
-    "type": "pcisph",
-    "max_iters": 12,
-    "density_tol": 0.005,
-    "clamp_negative_pressure": true
+    "type": "wcsph"
   },
   "debug": {
     "vx_profile": {
       "enable": true,
       "y_extent_mode": "walls_inner",
       "n_bins": 8,
+      "use_x_slice": false,
+      "x_slice_width": 0.2,
       "csv": {
         "enable": true,
         "every": 50,
-        "dir": "out/vx_profile"
+        "dir": "out/pipe_flow_2d",
+        "file": "vx_profile_bins.csv"
       }
     }
   },

@@ -46,7 +46,7 @@ from sph.neighbors.spatial_hash import SpatialHash
 
 
 def main() -> int:
-    print("[BOOT] NEW BOOTSTRAP ACTIVE ✅")
+    print("[BOOT] NEW BOOTSTRAP ACTIVE")
 
     if len(sys.argv) < 2:
         print("Usage: python -m sph.core.bootstrap <scene.json>")
@@ -147,6 +147,10 @@ def main() -> int:
     vx_profile_enabled = bool(vx_profile_cfg.get("enable", False))
     vx_profile_mode = str(vx_profile_cfg.get("y_extent_mode", "walls_inner"))
     vx_profile_n_bins = int(vx_profile_cfg.get("n_bins", 8))
+    vx_profile_use_x_slice = bool(vx_profile_cfg.get("use_x_slice", False))
+    vx_profile_x_slice_width = vx_profile_cfg.get("x_slice_width", None)
+    if vx_profile_x_slice_width is not None:
+        vx_profile_x_slice_width = float(vx_profile_x_slice_width)
     vx_profile_gx = vx_profile_cfg.get("gx", None)
     if vx_profile_gx is not None:
         vx_profile_gx = float(vx_profile_gx)
@@ -156,10 +160,12 @@ def main() -> int:
     if vx_profile_nu is not None:
         vx_profile_nu = float(vx_profile_nu)
     else:
-        vx_profile_nu = kinematic_viscosity if enable_viscosity else None
-    vx_profile_csv_enabled = bool(vx_profile_cfg.get("csv", {}).get("enable", False))
-    vx_profile_csv_every = int(vx_profile_cfg.get("csv", {}).get("every", 10))
-    vx_profile_csv_dir = Path(vx_profile_cfg.get("csv", {}).get("dir", "out/vx_profile"))
+        vx_profile_nu = kinematic_viscosity
+    vx_profile_csv_cfg = vx_profile_cfg.get("csv", {})
+    vx_profile_csv_enabled = bool(vx_profile_csv_cfg.get("enable", False))
+    vx_profile_csv_every = int(vx_profile_csv_cfg.get("every", 10))
+    vx_profile_csv_dir = Path(vx_profile_csv_cfg.get("dir", "out/pipe_flow_2d"))
+    vx_profile_csv_file = str(vx_profile_csv_cfg.get("file", "vx_profile_bins.csv"))
 
     # Export step 0000 if enabled (pre-step snapshot)
     if csv_enabled:
@@ -179,6 +185,7 @@ def main() -> int:
     # - builds a neighbor search for diagnostics
     # - prints/export snapshots for observability
     # -------------------------------------------------------------------------
+    sim_time = 0.0
     for s in range(steps):
         dt = step_simulation(
             state=state,
@@ -192,6 +199,7 @@ def main() -> int:
         ns = SpatialHash(support_radius=h, dim=dim)
         ns.build(state.pos)
         diag = compute_step_diagnostics(step=s + 1, dt=dt, state=state, rho0=rho0, neighbor_search=ns)
+        sim_time += float(dt)
 
         if (s == 0) or ((s + 1) % max(1, log_every) == 0):
             print(
@@ -212,12 +220,16 @@ def main() -> int:
                 n_bins=vx_profile_n_bins,
                 gx=vx_profile_gx,
                 nu=vx_profile_nu,
+                use_x_slice=vx_profile_use_x_slice,
+                x_slice_width=vx_profile_x_slice_width,
             )
             print(f"[STEP {diag.step:04d}] {format_vx_profile_log_line(vx_result)}")
             if vx_profile_csv_enabled and ((s + 1) % max(1, vx_profile_csv_every) == 0):
                 export_vx_profile_csv(
-                    vx_profile_csv_dir / f"vx_profile_step_{diag.step:04d}.csv",
+                    vx_profile_csv_dir / vx_profile_csv_file,
                     vx_result,
+                    scene_name=str(scene.get("meta", {}).get("name", "unknown")),
+                    sim_time=sim_time,
                 )
 
         if csv_enabled and ((s + 1) % max(1, csv_every) == 0):

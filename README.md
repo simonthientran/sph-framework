@@ -16,6 +16,13 @@ Modular Smoothed Particle Hydrodynamics (SPH) framework in Python.
 - `tests/` unit/regression tests
 # sph-framework
 
+## Pipe-flow vx-profile validation
+- Run simulation:
+  - `python -m sph.core.bootstrap scenes/examples/pipe_flow_1phase_2d.json`
+- Output profile CSV (with metadata header): `out/pipe_flow_2d/vx_profile_bins.csv`
+- Generate validation plot:
+  - `python tools/plot_vx_profile.py --input out/pipe_flow_2d/vx_profile_bins.csv --output out/pipe_flow_2d/vx_profile.png`
+
 ## PCISPH stability parameters (control logic)
 These knobs do **not** change the PCISPH equations; they only change control logic around them:
 
