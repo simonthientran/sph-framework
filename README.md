@@ -38,6 +38,17 @@ Modular Smoothed Particle Hydrodynamics (SPH) framework in Python.
   - `python -m sph.core.bootstrap scenes/verification/poiseuille_2d_wcsph.json --verify`
 - Reports are written to `out/verification/*.json`.
 
+## Diagnostics and adaptive timestep controls
+- Scene config supports optional diagnostics exports:
+  - `export.diagnostics.enable` (step-metrics CSV)
+  - `export.diagnostics.path` (default `out/diagnostics/step_metrics.csv`)
+  - `export.diagnostics.debug_snapshots` (enable instability-triggered particle CSV dumps)
+  - `export.diagnostics.debug_dir` (default `out/debug`)
+- Startup/runtime controls in `startup_safety`:
+  - `dt_ramp_up_max` (default `1.2`)
+  - `neighbor_histogram_every` (default `time.log_every`)
+  - `instability_rho_min_frac`, `instability_rho_max_frac`, `instability_neigh_min`, `instability_vmax`
+
 ## PCISPH stability parameters (control logic)
 These knobs do **not** change the PCISPH equations; they only change control logic around them:
 

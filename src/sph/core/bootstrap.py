@@ -38,10 +38,18 @@ from sph.boundary.mesh_sampling import (
     estimate_point_spacing,
     write_boundary_cloud_csv,
 )
-from sph.core.diagnostics import compute_step_diagnostics
+from sph.core.diagnostics import (
+    ConsoleSink,
+    CsvSink,
+    DebugSnapshotSink,
+    DiagnosticsManager,
+    InstabilityDetector,
+    build_step_metrics,
+)
 from sph.core.startup_sanity import evaluate_startup_sanity, format_startup_sanity_block
 from sph.core.simulator import SimConfig, step_simulation
 from sph.core.state_builder import build_scene_state
+from sph.core.timestep import TimeStepController
 from sph.core.vx_profile import (
     compute_vx_profile,
     export_vx_profile_csv,
@@ -147,45 +155,6 @@ def _enforce_kernel_support_radius(scene: dict) -> None:
             f"correcting support_radius to {required:.6g}"
         )
         neighbors_cfg["support_radius"] = required
-
-
-def _fluid_neighbor_counts(state, neighbor_search: SpatialHash) -> np.ndarray:
-    fluid_ids = state.fluid_indices
-    if fluid_ids.size == 0:
-        return np.zeros((0,), dtype=np.int64)
-    return np.array([len(neighbor_search.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
-
-
-def _print_neighbor_histogram(neigh_counts: np.ndarray) -> None:
-    if neigh_counts.size == 0:
-        print("[NEIGH] no fluid particles")
-        return
-    bins = [(0, 10), (10, 20), (20, 40), (40, 80), (80, None)]
-    lines = ["[NEIGH] histogram"]
-    for lo, hi in bins:
-        if hi is None:
-            count = int(np.count_nonzero(neigh_counts >= lo))
-            lines.append(f"[NEIGH] {lo:>2}+ : {count}")
-        else:
-            count = int(np.count_nonzero((neigh_counts >= lo) & (neigh_counts < hi)))
-            lines.append(f"[NEIGH] {lo:>2}-{hi:<2}: {count}")
-    print("\n".join(lines))
-
-
-def _dump_debug_state(step: int, state, neigh_counts: np.ndarray) -> Path:
-    out_dir = Path("out")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"debug_state_step{int(step):04d}.csv"
-    fluid_ids = state.fluid_indices
-    with out_path.open("w", encoding="utf-8") as f:
-        f.write("x,y,vx,vy,rho,pressure,neighbor_count\n")
-        for k, i in enumerate(fluid_ids):
-            f.write(
-                f"{state.pos[i,0]:.9e},{state.pos[i,1]:.9e},"
-                f"{state.vel[i,0]:.9e},{state.vel[i,1]:.9e},"
-                f"{state.rho[i]:.9e},{state.p[i]:.9e},{int(neigh_counts[k])}\n"
-            )
-    return out_path
 
 
 def main() -> int:
@@ -314,6 +283,7 @@ def main() -> int:
     instability_rho_max_frac = float(startup_cfg.get("instability_rho_max_frac", 2.0))
     instability_neigh_min = int(startup_cfg.get("instability_neigh_min", 5))
     instability_vmax = float(startup_cfg.get("instability_vmax", 100.0))
+    dt_ramp_up_max = float(startup_cfg.get("dt_ramp_up_max", 1.2))
     sanity = evaluate_startup_sanity(
         scene=scene,
         state=state,
@@ -370,6 +340,11 @@ def main() -> int:
     vtk_enabled = bool(vtk_cfg.get("enable", False))
     vtk_every = int(vtk_cfg.get("every", 10))
     vtk_dir = Path(vtk_cfg.get("dir", "out/vtk"))
+    diag_cfg = export_cfg.get("diagnostics", {})
+    diag_csv_enabled = bool(diag_cfg.get("enable", False))
+    diag_csv_path = Path(str(diag_cfg.get("path", "out/diagnostics/step_metrics.csv")))
+    debug_snapshot_enabled = bool(diag_cfg.get("debug_snapshots", True))
+    debug_snapshot_dir = Path(str(diag_cfg.get("debug_dir", "out/debug")))
 
     # Vx-profile debug (optional): scene.debug.vx_profile.enable, y_extent_mode, n_bins, gx, nu
     debug_cfg = scene.get("debug", {})
@@ -405,6 +380,28 @@ def main() -> int:
     if args.debug_geom or scene.get("geometry", {}).get("meshes"):
         _print_geom_step0_report(state, h=h, spacing=spacing, debug_geom=bool(args.debug_geom))
 
+    controller = TimeStepController(
+        use_cfl=bool(cfg.use_cfl),
+        cfl=float(cfg.cfl_lambda),
+        h=float(h),
+        dt_min=float(cfg.dt_min),
+        dt_max=float(cfg.dt_max),
+        ramp_up_max=dt_ramp_up_max,
+    )
+    diagnostics = DiagnosticsManager(
+        console_sink=ConsoleSink(log_every=log_every, neigh_hist_every=neigh_hist_every),
+        csv_sink=CsvSink(output_path=diag_csv_path, enabled=diag_csv_enabled),
+        debug_snapshot_sink=DebugSnapshotSink(enabled=debug_snapshot_enabled, output_dir=debug_snapshot_dir),
+        instability_detector=InstabilityDetector(
+            rho0=rho0,
+            neigh_min_threshold=instability_neigh_min,
+            rho_min_frac=instability_rho_min_frac,
+            rho_max_frac=instability_rho_max_frac,
+            v_limit=instability_vmax,
+        ),
+    )
+    dt_control = float(cfg.dt_max if cfg.use_cfl else cfg.dt_fixed)
+
     # -------------------------------------------------------------------------
     # Main simulation loop
     #
@@ -424,6 +421,10 @@ def main() -> int:
             alpha = float((s + 1) / max(1, dt_ramp_steps))
             scale = float(dt_ramp_factor + (1.0 - dt_ramp_factor) * alpha)
             step_cfg = replace(cfg, dt_max=float(cfg.dt_max * scale))
+        if cfg.use_cfl:
+            step_cfg = replace(step_cfg, dt_max=float(min(step_cfg.dt_max, dt_control)))
+        else:
+            step_cfg = replace(step_cfg, dt_fixed=float(dt_control))
         dt = step_simulation(
             state=state,
             cfg=step_cfg,
@@ -435,40 +436,21 @@ def main() -> int:
         # Diagnostics neighbor search on current positions (read-only)
         ns = SpatialHash(support_radius=h, dim=dim)
         ns.build(state.pos)
-        diag = compute_step_diagnostics(step=s + 1, dt=dt, state=state, rho0=rho0, neighbor_search=ns)
-        neigh_counts = _fluid_neighbor_counts(state, ns)
         sim_time += float(dt)
-
-        if (s == 0) or ((s + 1) % max(1, log_every) == 0):
-            print(
-                f"[STEP {diag.step:04d}] dt={diag.dt:.3e} "
-                f"|v|max={diag.v_max:.3e} "
-                f"rho(min/avg/max)={diag.rho_min:.2f}/{diag.rho_mean:.2f}/{diag.rho_max:.2f} "
-                f"err% (avg)={100.0 * diag.rho_rel_err_mean:.2f} "
-                f"p(min/avg/max)={diag.p_min:.2f}/{diag.p_mean:.2f}/{diag.p_max:.2f} "
-                f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}"
-            )
-        if ((s + 1) % max(1, neigh_hist_every) == 0):
-            _print_neighbor_histogram(neigh_counts)
-
-        unstable = (
-            (diag.rho_min < instability_rho_min_frac * rho0)
-            or (diag.rho_max > instability_rho_max_frac * rho0)
-            or (diag.neigh_min < instability_neigh_min)
-            or (diag.v_max > instability_vmax)
+        metrics, neigh_counts = build_step_metrics(
+            step=s + 1,
+            time=sim_time,
+            dt=dt,
+            state=state,
+            rho0=rho0,
+            neighbor_search=ns,
         )
-        if unstable:
-            debug_path = _dump_debug_state(step=diag.step, state=state, neigh_counts=neigh_counts)
-            print(
-                "[RUNTIME][WARN] particle instability detected "
-                f"(rho_min={diag.rho_min:.3e}, rho_max={diag.rho_max:.3e}, "
-                f"neigh_min={diag.neigh_min}, vmax={diag.v_max:.3e}) "
-                f"snapshot={debug_path}"
-            )
+        dt_control = controller.update(metrics)
+        diagnostics.process(metrics=metrics, state=state, neigh_counts=neigh_counts)
 
         if vx_profile_enabled and ((s == 0) or ((s + 1) % max(1, log_every) == 0)):
             vx_result = compute_vx_profile(
-                step=diag.step,
+                step=metrics.step,
                 state=state,
                 scene=scene,
                 y_extent_mode=vx_profile_mode,
@@ -478,7 +460,7 @@ def main() -> int:
                 use_x_slice=vx_profile_use_x_slice,
                 x_slice_width=vx_profile_x_slice_width,
             )
-            print(f"[STEP {diag.step:04d}] {format_vx_profile_log_line(vx_result)}")
+            print(f"[STEP {metrics.step:04d}] {format_vx_profile_log_line(vx_result)}")
             if vx_profile_csv_enabled and ((s + 1) % max(1, vx_profile_csv_every) == 0):
                 export_vx_profile_csv(
                     vx_profile_csv_dir / vx_profile_csv_file,
@@ -488,10 +470,10 @@ def main() -> int:
                 )
 
         if csv_enabled and ((s + 1) % max(1, csv_every) == 0):
-            export_particles_csv(csv_dir / f"particles_step_{diag.step:04d}.csv", state)
+            export_particles_csv(csv_dir / f"particles_step_{metrics.step:04d}.csv", state)
 
         if vtk_enabled and ((s + 1) % max(1, vtk_every) == 0):
-            export_particles_vtk_legacy(vtk_dir / f"particles_step_{diag.step:04d}.vtk", state)
+            export_particles_vtk_legacy(vtk_dir / f"particles_step_{metrics.step:04d}.vtk", state)
 
     print("[BOOT] done")
     return 0
