@@ -226,6 +226,12 @@ def main() -> int:
         domain_max=domain_max,
         boundary_restitution=float(boundary_cfg.get("restitution", domain_cfg.get("restitution", 0.0))),
         boundary_friction=float(boundary_cfg.get("friction", domain_cfg.get("friction", 0.05))),
+        boundary_tangent_friction=float(
+            boundary_cfg.get("tangent_friction", boundary_cfg.get("friction", domain_cfg.get("friction", 0.1)))
+        ),
+        boundary_normal_damping=float(boundary_cfg.get("normal_damping", 0.2)),
+        max_penetration_push_frac_of_dx=float(boundary_cfg.get("max_penetration_push_frac_of_dx", 0.25)),
+        boundary_log_speed_threshold=float(boundary_cfg.get("log_speed_threshold", 30.0)),
         boundary_eps=(
             float(boundary_cfg.get("eps"))
             if boundary_cfg.get("eps", None) is not None

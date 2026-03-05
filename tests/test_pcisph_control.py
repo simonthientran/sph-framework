@@ -59,8 +59,11 @@ def test_inactive_particles_are_not_frozen_advect_normally():
         debug=False,
     )
 
-    vel_expected = vel0 + dt * g[None, :]
-    pos_expected = pos0 + dt * vel_expected
+    # Neighbor-collapse guard scales dt when a particle has zero neighbors:
+    # dt <- dt * 0.5, and then dt <- dt * 0.25 for neigh_min==0.
+    dt_eff = dt * 0.5 * 0.25
+    vel_expected = vel0 + dt_eff * g[None, :]
+    pos_expected = pos0 + dt_eff * vel_expected
 
     assert np.allclose(state.vel, vel_expected)
     assert np.allclose(state.pos, pos_expected)

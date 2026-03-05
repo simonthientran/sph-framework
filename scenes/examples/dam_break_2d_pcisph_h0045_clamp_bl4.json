@@ -11,6 +11,12 @@
     "max": [1.0, 0.6],
     "boundary_layers": 4
   },
+  "boundary": {
+    "restitution": 0.0,
+    "tangent_friction": 0.1,
+    "normal_damping": 0.2,
+    "max_penetration_push_frac_of_dx": 0.25
+  },
   "fluid": {
     "type": "block",
     "min": [0.05, 0.05],
@@ -42,28 +48,33 @@
     "dt_min": 1e-05,
     "dt_max": 0.0005,
     "dt_fixed": 0.0005,
-    "steps": 50,
-    "log_every": 10
+    "steps": 220,
+    "log_every": 20
   },
   "solver": {
     "type": "pcisph",
     "max_iters": 12,
     "density_tol": 0.005,
+    "negative_pressure_mode": "soft_cap",
+    "negative_pressure_soft_factor": 0.2,
     "clamp_negative_pressure": true,
-    "debug": true,
-    "debug_dump_on_step": 50
+    "debug": false
   },
   "export": {
     "csv": {
-      "enable": true,
+      "enable": false,
       "every": 10,
       "dir": "out/csv"
     },
     "vtk": {
-      "enable": true,
+      "enable": false,
       "every": 10,
       "dir": "out/vtk"
     }
+  },
+  "startup_safety": {
+    "density_error_warn_rel": 0.05,
+    "density_error_abort_rel": 0.20
   }
 }
 

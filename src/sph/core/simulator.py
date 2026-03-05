@@ -60,6 +60,10 @@ class SimConfig:
     domain_max: np.ndarray | None = None
     boundary_restitution: float = 0.0
     boundary_friction: float = 0.05
+    boundary_tangent_friction: float = 0.1
+    boundary_normal_damping: float = 0.2
+    max_penetration_push_frac_of_dx: float = 0.25
+    boundary_log_speed_threshold: float = 30.0
     # Collision push-out epsilon. If None, we derive eps = 1e-4 * support_radius.
     boundary_eps: float | None = None
     # Optional clamp for pressure acceleration norm on fluid particles.
@@ -68,7 +72,13 @@ class SimConfig:
     boundary_force_accel_clamp: float | None = None
 
 
-def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
+def enforce_domain_boundary_constraints(
+    state: ParticleState,
+    cfg: SimConfig,
+    *,
+    particle_size: float | None = None,
+    debug: bool = False,
+) -> None:
     """
     Enforce axis-aligned bounding box constraints on FLUID particles.
     """
@@ -86,7 +96,9 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
     dmin = cfg.domain_min
     dmax = cfg.domain_max
     restitution = float(cfg.boundary_restitution)
-    friction = float(cfg.boundary_friction)
+    tangent_friction = float(np.clip(cfg.boundary_tangent_friction, 0.0, 1.0))
+    normal_damping = float(np.clip(cfg.boundary_normal_damping, 0.0, 1.0))
+    speed_log_threshold = float(max(cfg.boundary_log_speed_threshold, 0.0))
     eps = cfg.boundary_eps
     if eps is None:
         # Default: a tiny fraction of the kernel support to avoid particles landing
@@ -94,6 +106,11 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
         # artifacts due to floating point round-off).
         eps = 1e-4 * float(cfg.support_radius)
     eps = float(max(eps, 0.0))
+    if particle_size is not None and float(particle_size) > 0.0:
+        dx_est = float(particle_size)
+    else:
+        dx_est = 0.5 * float(cfg.support_radius)
+    max_pen_push = float(max(0.0, cfg.max_penetration_push_frac_of_dx) * dx_est)
     
     # We iterate per dimension. Vectorized over fluid particles.
     # dim is inferred from dmin/dmax shape.
@@ -112,8 +129,12 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
             old_pos_d = pos[idx, d].copy()
             old_vel = vel[idx].copy()
 
-            # Push-out with epsilon (prevents exact-on-boundary teleport artifacts)
-            pos[idx, d] = dmin[d] + eps
+            depth = (dmin[d] - old_pos_d)
+            push = np.minimum(depth, max_pen_push)
+            pos_new = old_pos_d + push
+            fully_resolved = depth <= max_pen_push
+            pos_new[fully_resolved] = dmin[d] + eps
+            pos[idx, d] = pos_new
 
             # Normal vector for min face points inward (+axis)
             n = np.zeros((dim,), dtype=np.float64)
@@ -125,13 +146,16 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
                 ids_move = idx[moving_out]
                 vn = v_n[moving_out][:, None] * n[None, :]
                 vt = vel[ids_move] - vn
-                vn_new = -restitution * vn
-                vt_new = (1.0 - friction) * vt
+                vn_new = (-restitution * vn) * (1.0 - normal_damping)
+                vt_new = (1.0 - tangent_friction) * vt
                 vel[ids_move] = vn_new + vt_new
 
             if debug and debug_budget > 0:
-                depth = (dmin[d] - old_pos_d)
-                for k in range(min(int(idx.size), debug_budget)):
+                speed_before = np.linalg.norm(old_vel, axis=1)
+                speed_after = np.linalg.norm(vel[idx], axis=1)
+                should_log = (depth > 0.5 * max_pen_push) | (speed_before > speed_log_threshold) | (speed_after > speed_log_threshold)
+                log_ids = np.where(should_log)[0]
+                for k in log_ids[:debug_budget]:
                     i = int(idx[k])
                     print(
                         f"[BOUNDARY] i={i} face={['x','y','z'][d]}_min "
@@ -139,7 +163,7 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
                         f"pos:{float(old_pos_d[k]):.6f}->{float(pos[i, d]):.6f} "
                         f"vel:{old_vel[k]}->{vel[i]}"
                     )
-                debug_budget -= int(min(int(idx.size), debug_budget))
+                debug_budget -= int(min(int(log_ids.size), debug_budget))
 
         # -------------------------
         # x/y/z MAX face (normal -axis)
@@ -150,7 +174,12 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
             old_pos_d = pos[idx, d].copy()
             old_vel = vel[idx].copy()
 
-            pos[idx, d] = dmax[d] - eps
+            depth = (old_pos_d - dmax[d])
+            push = np.minimum(depth, max_pen_push)
+            pos_new = old_pos_d - push
+            fully_resolved = depth <= max_pen_push
+            pos_new[fully_resolved] = dmax[d] - eps
+            pos[idx, d] = pos_new
 
             n = np.zeros((dim,), dtype=np.float64)
             n[d] = -1.0
@@ -160,13 +189,16 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
                 ids_move = idx[moving_out]
                 vn = v_n[moving_out][:, None] * n[None, :]
                 vt = vel[ids_move] - vn
-                vn_new = -restitution * vn
-                vt_new = (1.0 - friction) * vt
+                vn_new = (-restitution * vn) * (1.0 - normal_damping)
+                vt_new = (1.0 - tangent_friction) * vt
                 vel[ids_move] = vn_new + vt_new
 
             if debug and debug_budget > 0:
-                depth = (old_pos_d - dmax[d])
-                for k in range(min(int(idx.size), debug_budget)):
+                speed_before = np.linalg.norm(old_vel, axis=1)
+                speed_after = np.linalg.norm(vel[idx], axis=1)
+                should_log = (depth > 0.5 * max_pen_push) | (speed_before > speed_log_threshold) | (speed_after > speed_log_threshold)
+                log_ids = np.where(should_log)[0]
+                for k in log_ids[:debug_budget]:
                     i = int(idx[k])
                     print(
                         f"[BOUNDARY] i={i} face={['x','y','z'][d]}_max "
@@ -174,7 +206,7 @@ def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *,
                         f"pos:{float(old_pos_d[k]):.6f}->{float(pos[i, d]):.6f} "
                         f"vel:{old_vel[k]}->{vel[i]}"
                     )
-                debug_budget -= int(min(int(idx.size), debug_budget))
+                debug_budget -= int(min(int(log_ids.size), debug_budget))
 
 
 def compute_dt_cfl(
@@ -416,7 +448,7 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     state.vel[state.is_boundary] = 0.0
 
     # Enforce domain boundaries (collision)
-    enforce_domain_boundary_constraints(state, cfg)
+    enforce_domain_boundary_constraints(state, cfg, particle_size=float(particle_size))
 
     return dt
 
@@ -458,19 +490,20 @@ def step_simulation(
         # New config:
         #   negative_pressure_mode: one of ["none", "hard_zero", "soft_cap"]
         #   negative_pressure_cap: float | null
-        #   negative_pressure_soft_factor: float (default 0.5)
+        #   negative_pressure_soft_factor: float (default 0.2)
         #
         # Backwards compatibility:
         # - legacy "clamp_negative_pressure" / "clamp_negative_pressure_final" map to:
-        #     True  -> "hard_zero"
+        #     True  -> "soft_cap"
         #     False -> "none"
         # - legacy "clamp_negative_pressure_iter" is still supported.
         # ------------------------------------------------------------------
         legacy_clamp = bool(solver_cfg_dict.get("clamp_negative_pressure", True))
         legacy_final = bool(solver_cfg_dict.get("clamp_negative_pressure_final", legacy_clamp))
-        negative_pressure_mode = str(
-            solver_cfg_dict.get("negative_pressure_mode", "hard_zero" if legacy_final else "none")
-        ).lower()
+        if "negative_pressure_mode" in solver_cfg_dict:
+            negative_pressure_mode = str(solver_cfg_dict.get("negative_pressure_mode", "soft_cap")).lower()
+        else:
+            negative_pressure_mode = "soft_cap" if legacy_final else "none"
         negative_pressure_cap = solver_cfg_dict.get("negative_pressure_cap", None)
         negative_pressure_cap = float(negative_pressure_cap) if negative_pressure_cap is not None else None
         negative_pressure_soft_factor = float(solver_cfg_dict.get("negative_pressure_soft_factor", 0.2))

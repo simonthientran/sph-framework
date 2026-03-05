@@ -47,6 +47,7 @@ _KPCI_CACHE: dict[tuple[int, float, float, float, float], float] = {}
 # Optional per-state cache for active-set hysteresis (control logic only).
 # Keyed by id(state) to avoid modifying ParticleState (which uses slots=True).
 _UNDER_NEIGHBOR_STREAK_CACHE: dict[int, np.ndarray] = {}
+_NEIGHBOR_COLLAPSE_WARNED = False
 
 
 def _inactive_mask_with_hold_steps(
@@ -519,9 +520,9 @@ def step_pcisph_with_boundaries(
     max_iters: int,
     density_tol: float,
     warm_start_pressure: bool = True,
-    negative_pressure_mode: str = "none",
+    negative_pressure_mode: str = "soft_cap",
     negative_pressure_cap: float | None = None,
-    negative_pressure_soft_factor: float = 0.5,
+    negative_pressure_soft_factor: float = 0.2,
     clamp_negative_pressure_iter: bool = False,
     min_neighbors_for_pressure: int = 10,
     adaptive_min_neighbors_for_pressure: bool = True,
@@ -632,6 +633,10 @@ def step_pcisph_with_boundaries(
     inactive_ids = fluid_ids[~active_neighbors_mask]
     inactive_count = int(inactive_ids.size)
 
+    neigh_min = int(np.min(neigh_counts)) if neigh_counts.size else 0
+    zero_neighbor_local = neigh_counts == 0
+    zero_neighbor_ids = fluid_ids[zero_neighbor_local]
+
     # (2) dt selection:
     # - Normally: same policy as WCSPH (CFL Eq. (33) or fixed)
     # - Debug mode: force fixed dt to isolate PCISPH correctness from CFL feedback
@@ -639,6 +644,11 @@ def step_pcisph_with_boundaries(
         dt = float(cfg.dt_fixed)
     else:
         dt = _compute_dt_eq33(cfg, v_fluid=state.vel[fluid_ids], particle_size=float(particle_size))
+    # Neighbor-collapse guard: reduce dt aggressively as soon as local sampling degrades.
+    if neigh_counts.size and neigh_min < int(max(3, min_n_cfg)):
+        dt = max(float(cfg.dt_min), 0.5 * float(dt))
+    if neigh_counts.size and neigh_min == 0:
+        dt = max(1e-6, 0.25 * float(dt))
 
     # (3) non-pressure acceleration a_nonp: external body force only (gravity)
     a_nonp = np.zeros((n, dim), dtype=np.float64)
@@ -676,6 +686,24 @@ def step_pcisph_with_boundaries(
     forced_active_local = np.zeros((fluid_ids.size,), dtype=np.bool_)
     if bool(force_active_if_density_low) and fluid_ids.size:
         forced_active_local = rho_star[fluid_ids] < force_active_rho_min_val
+        # Never force-activate particles with zero neighbors; pressure solve is ill-posed for them.
+        forced_active_local &= (neigh_counts >= 1)
+
+    global _NEIGHBOR_COLLAPSE_WARNED
+    if zero_neighbor_ids.size and not _NEIGHBOR_COLLAPSE_WARNED:
+        _NEIGHBOR_COLLAPSE_WARNED = True
+        print(
+            f"[PCISPH][WARN] step={step_idx} neighbor collapse detected "
+            f"(zero-neighbor fluid particles={int(zero_neighbor_ids.size)}); dt guard engaged."
+        )
+        order_nc = np.argsort(neigh_counts)  # ascending
+        worst_k = min(10, int(order_nc.size))
+        for k in order_nc[:worst_k]:
+            i = int(fluid_ids[k])
+            print(
+                f"[PCISPH][WARN][NEIGHBOR_COLLAPSE] i={i} neigh={int(neigh_counts[k])} "
+                f"pos={state.pos[i]} vel={state.vel[i]} rho*={float(rho_star[i]):.3e}"
+            )
 
     pressure_active_mask_local = active_neighbors_mask | forced_active_local
     pressure_active_ids = fluid_ids[pressure_active_mask_local]
@@ -1082,7 +1110,7 @@ def step_pcisph_with_boundaries(
     state.vel[state.is_boundary] = 0.0
 
     # Enforce domain boundaries (collision)
-    enforce_domain_boundary_constraints(state, cfg, debug=bool(debug))
+    enforce_domain_boundary_constraints(state, cfg, particle_size=float(particle_size), debug=bool(debug))
 
     # Store final p/rho for observability (read by diagnostics/export).
     state.p[:] = p
