@@ -131,6 +131,63 @@ def _print_geom_step0_report(state, h: float, spacing: float, *, debug_geom: boo
         print("[GEOM][STEP0] wrote boundary cloud CSV: out/geom/boundary_cloud_step0.csv")
 
 
+def _enforce_kernel_support_radius(scene: dict) -> None:
+    neighbors_cfg = scene.get("neighbors", {})
+    if not neighbors_cfg:
+        return
+    support_radius = float(neighbors_cfg.get("support_radius", 0.0))
+    smoothing_h = neighbors_cfg.get("smoothing_length", neighbors_cfg.get("h", None))
+    if smoothing_h is None:
+        return
+    required = float(2.0 * float(smoothing_h))
+    if support_radius < required:
+        print("[STARTUP][FIX]")
+        print(
+            f"support_radius ({support_radius:.6g}) < required kernel support ({required:.6g}); "
+            f"correcting support_radius to {required:.6g}"
+        )
+        neighbors_cfg["support_radius"] = required
+
+
+def _fluid_neighbor_counts(state, neighbor_search: SpatialHash) -> np.ndarray:
+    fluid_ids = state.fluid_indices
+    if fluid_ids.size == 0:
+        return np.zeros((0,), dtype=np.int64)
+    return np.array([len(neighbor_search.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
+
+
+def _print_neighbor_histogram(neigh_counts: np.ndarray) -> None:
+    if neigh_counts.size == 0:
+        print("[NEIGH] no fluid particles")
+        return
+    bins = [(0, 10), (10, 20), (20, 40), (40, 80), (80, None)]
+    lines = ["[NEIGH] histogram"]
+    for lo, hi in bins:
+        if hi is None:
+            count = int(np.count_nonzero(neigh_counts >= lo))
+            lines.append(f"[NEIGH] {lo:>2}+ : {count}")
+        else:
+            count = int(np.count_nonzero((neigh_counts >= lo) & (neigh_counts < hi)))
+            lines.append(f"[NEIGH] {lo:>2}-{hi:<2}: {count}")
+    print("\n".join(lines))
+
+
+def _dump_debug_state(step: int, state, neigh_counts: np.ndarray) -> Path:
+    out_dir = Path("out")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"debug_state_step{int(step):04d}.csv"
+    fluid_ids = state.fluid_indices
+    with out_path.open("w", encoding="utf-8") as f:
+        f.write("x,y,vx,vy,rho,pressure,neighbor_count\n")
+        for k, i in enumerate(fluid_ids):
+            f.write(
+                f"{state.pos[i,0]:.9e},{state.pos[i,1]:.9e},"
+                f"{state.vel[i,0]:.9e},{state.vel[i,1]:.9e},"
+                f"{state.rho[i]:.9e},{state.p[i]:.9e},{int(neigh_counts[k])}\n"
+            )
+    return out_path
+
+
 def main() -> int:
     print("[BOOT] NEW BOOTSTRAP ACTIVE")
 
@@ -145,6 +202,7 @@ def main() -> int:
     # Provide scene directory so relative asset paths (e.g., STL files) resolve predictably.
     scene["__scene_dir__"] = str(scene_path.parent)
     scene["__debug_geom__"] = bool(args.debug_geom)
+    _enforce_kernel_support_radius(scene)
 
     if bool(args.verify):
         solver_name = str(scene.get("solver", {}).get("type", "wcsph")).lower()
@@ -251,6 +309,11 @@ def main() -> int:
     dt_ramp_enabled = bool(startup_cfg.get("dt_ramp_if_high_density_error", True))
     dt_ramp_steps = int(startup_cfg.get("dt_ramp_steps", 10))
     dt_ramp_factor = float(startup_cfg.get("dt_ramp_factor", 0.25))
+    neigh_hist_every = int(startup_cfg.get("neighbor_histogram_every", max(1, log_every)))
+    instability_rho_min_frac = float(startup_cfg.get("instability_rho_min_frac", 0.5))
+    instability_rho_max_frac = float(startup_cfg.get("instability_rho_max_frac", 2.0))
+    instability_neigh_min = int(startup_cfg.get("instability_neigh_min", 5))
+    instability_vmax = float(startup_cfg.get("instability_vmax", 100.0))
     sanity = evaluate_startup_sanity(
         scene=scene,
         state=state,
@@ -270,8 +333,13 @@ def main() -> int:
     if init_rel_err > density_warn_threshold:
         print(
             f"[STARTUP][WARN] initial density rel error={init_rel_err:.3%} (> {density_warn_threshold:.3%}). "
-            "Likely causes: mesh scale mismatch, fluid-boundary overlap, insufficient boundary resolution, "
-            "or very low STL triangle count."
+            "Possible causes: insufficient support radius, boundary overlap/layers, mesh scale mismatch, "
+            "or smoothing-length mismatch."
+        )
+    if sanity.boundary_layer_overlap:
+        print(
+            "[STARTUP][WARN] Fluid initialized inside boundary layer region. "
+            "This causes incorrect density initialization. Recommended offset: boundary_layers*dx."
         )
     if sanity.should_abort:
         print(
@@ -368,6 +436,7 @@ def main() -> int:
         ns = SpatialHash(support_radius=h, dim=dim)
         ns.build(state.pos)
         diag = compute_step_diagnostics(step=s + 1, dt=dt, state=state, rho0=rho0, neighbor_search=ns)
+        neigh_counts = _fluid_neighbor_counts(state, ns)
         sim_time += float(dt)
 
         if (s == 0) or ((s + 1) % max(1, log_every) == 0):
@@ -378,6 +447,23 @@ def main() -> int:
                 f"err% (avg)={100.0 * diag.rho_rel_err_mean:.2f} "
                 f"p(min/avg/max)={diag.p_min:.2f}/{diag.p_mean:.2f}/{diag.p_max:.2f} "
                 f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}"
+            )
+        if ((s + 1) % max(1, neigh_hist_every) == 0):
+            _print_neighbor_histogram(neigh_counts)
+
+        unstable = (
+            (diag.rho_min < instability_rho_min_frac * rho0)
+            or (diag.rho_max > instability_rho_max_frac * rho0)
+            or (diag.neigh_min < instability_neigh_min)
+            or (diag.v_max > instability_vmax)
+        )
+        if unstable:
+            debug_path = _dump_debug_state(step=diag.step, state=state, neigh_counts=neigh_counts)
+            print(
+                "[RUNTIME][WARN] particle instability detected "
+                f"(rho_min={diag.rho_min:.3e}, rho_max={diag.rho_max:.3e}, "
+                f"neigh_min={diag.neigh_min}, vmax={diag.v_max:.3e}) "
+                f"snapshot={debug_path}"
             )
 
         if vx_profile_enabled and ((s == 0) or ((s + 1) % max(1, log_every) == 0)):

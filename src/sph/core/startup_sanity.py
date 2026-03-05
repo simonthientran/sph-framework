@@ -25,6 +25,10 @@ class StartupSanityReport:
     overlap_close_fraction: float
     overlap_min_dist: float
     outside_domain_count: int
+    support_radius_mismatch: bool
+    required_support_radius: float | None
+    boundary_layer_overlap: bool
+    boundary_thickness: float
     units_mismatch_detected: bool
     recommendations: tuple[str, ...]
     auto_tuned_support_radius: float | None
@@ -73,6 +77,13 @@ def evaluate_startup_sanity(
     spacing = float(spacing)
     rho0 = float(rho0)
     h_over_dx = float(h / dx_mean) if np.isfinite(dx_mean) and dx_mean > 0.0 else float("nan")
+    neighbors_cfg = scene.get("neighbors", {})
+    smoothing_h = neighbors_cfg.get("smoothing_length", neighbors_cfg.get("h", None))
+    required_support_radius = None
+    support_radius_mismatch = False
+    if smoothing_h is not None:
+        required_support_radius = float(2.0 * float(smoothing_h))
+        support_radius_mismatch = bool(h < required_support_radius)
 
     # Reference convention requested by verification notes: cubic spline support radius = 2h.
     support_radius_expected = float(2.0 * h)
@@ -101,12 +112,23 @@ def evaluate_startup_sanity(
         threshold=0.5 * spacing,
     )
     outside_count = 0
+    boundary_layer_overlap = False
+    boundary_thickness = 0.0
     domain_cfg = scene.get("domain", {})
     if "min" in domain_cfg and "max" in domain_cfg and fluid_ids.size:
         dmin = np.asarray(domain_cfg["min"], dtype=np.float64)
         dmax = np.asarray(domain_cfg["max"], dtype=np.float64)
         outside = np.any((fluid_pos < dmin[None, :]) | (fluid_pos > dmax[None, :]), axis=1)
         outside_count = int(np.count_nonzero(outside))
+        layers = int(domain_cfg.get("boundary_layers", max(1, int(np.ceil(h / max(spacing, 1e-12))))))
+        boundary_thickness = float(max(0, layers) * spacing)
+        fluid_cfg = scene.get("fluid", {})
+        if "min" in fluid_cfg and "max" in fluid_cfg:
+            fmin = np.asarray(fluid_cfg["min"], dtype=np.float64)
+            fmax = np.asarray(fluid_cfg["max"], dtype=np.float64)
+            near_min = np.any(fmin < (dmin + boundary_thickness))
+            near_max = np.any(fmax > (dmax - boundary_thickness))
+            boundary_layer_overlap = bool(near_min or near_max)
 
     units_mismatch_detected = False
     geom_report = scene.get("__geom_report__", {})
@@ -133,8 +155,16 @@ def evaluate_startup_sanity(
         recommendations.append("Expected 2D neighbor count is below target (15-30); increase h or reduce dx.")
     if overlap.close_fraction > 0.01:
         recommendations.append("Fluid is close to boundaries at t=0; check overlap and boundary layers/sampling.")
+    if boundary_layer_overlap:
+        recommendations.append(
+            "Fluid overlaps boundary-layer region at startup; offset fluid by at least boundary_layers*dx from walls."
+        )
     if outside_count > 0:
         recommendations.append("Some fluid particles start outside domain; adjust fluid block/domain bounds.")
+    if support_radius_mismatch and required_support_radius is not None:
+        recommendations.append(
+            f"support_radius={h:.6e} is smaller than kernel support requirement 2h={required_support_radius:.6e}."
+        )
     if rho_rel_err_mean > density_warn_rel:
         recommendations.append("Initial density error is high; check units/scale, overlap, h/dx, and boundary resolution.")
     if units_mismatch_detected:
@@ -169,6 +199,10 @@ def evaluate_startup_sanity(
         overlap_close_fraction=float(overlap.close_fraction),
         overlap_min_dist=float(overlap.min_distance),
         outside_domain_count=outside_count,
+        support_radius_mismatch=support_radius_mismatch,
+        required_support_radius=required_support_radius,
+        boundary_layer_overlap=boundary_layer_overlap,
+        boundary_thickness=boundary_thickness,
         units_mismatch_detected=units_mismatch_detected,
         recommendations=tuple(recommendations),
         auto_tuned_support_radius=auto_tuned_support_radius,
@@ -196,6 +230,14 @@ def format_startup_sanity_block(report: StartupSanityReport) -> str:
             f"min_dist={report.overlap_min_dist:.6e} | outside_domain={report.outside_domain_count}"
         ),
     ]
+    if report.support_radius_mismatch and report.required_support_radius is not None:
+        lines.append(
+            f"  support check: support_radius={report.h:.6e} < required(2h)={report.required_support_radius:.6e}"
+        )
+    if report.boundary_layer_overlap:
+        lines.append(
+            f"  boundary-layer overlap: true (boundary_thickness={report.boundary_thickness:.6e})"
+        )
     if report.auto_tuned_support_radius is not None:
         lines.append(
             f"  fix: auto_tune_support_radius -> {report.auto_tuned_support_radius:.6e} (from {report.h:.6e})"
