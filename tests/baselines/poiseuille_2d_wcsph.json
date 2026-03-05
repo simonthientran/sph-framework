@@ -1,0 +1,11 @@
+{
+  "scene_name": "poiseuille_2d_wcsph",
+  "solver": "wcsph",
+  "summary_ranges": {
+    "density_rel_err_mean_max": [0.0, 0.01],
+    "mass_rel_drift": [0.0, 1e-10],
+    "vmax_max": [0.0, 0.1],
+    "pabs_max": [0.0, 50000.0],
+    "poiseuille_l2_last": [0.0, 0.05]
+  }
+}

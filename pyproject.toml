@@ -5,6 +5,7 @@ description = "Modular SPH simulation framework in Python"
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
+  "numpy-stl",
 ]
 
 [build-system]

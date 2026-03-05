@@ -42,6 +42,9 @@ class SimConfig:
     dt_max: float
     dt_fixed: float
     use_cfl: bool
+    # Optional acoustic speed used for WCSPH CFL acoustics.
+    # If None, we derive c0 ~= sqrt(k/rho0) for linear EOS.
+    eos_c0: float | None = None
 
     # Viscosity (optional, based on Laplacian discretization).
     # Defaults keep viscosity disabled, matching the behavior used in the
@@ -59,6 +62,10 @@ class SimConfig:
     boundary_friction: float = 0.05
     # Collision push-out epsilon. If None, we derive eps = 1e-4 * support_radius.
     boundary_eps: float | None = None
+    # Optional clamp for pressure acceleration norm on fluid particles.
+    # This is a numerical safety guard for problematic startup configurations.
+    # None disables clamping.
+    boundary_force_accel_clamp: float | None = None
 
 
 def enforce_domain_boundary_constraints(state: ParticleState, cfg: SimConfig, *, debug: bool = False) -> None:
@@ -197,6 +204,42 @@ def compute_dt_cfl(
     return float(np.clip(dt, dt_min, dt_max))
 
 
+def compute_dt_wcsph_constraints(
+    *,
+    v: np.ndarray,
+    h_tilde: float,
+    lam: float,
+    dt_min: float,
+    dt_max: float,
+    c0: float,
+    nu: float,
+) -> float:
+    """
+    WCSPH timestep with convective, acoustic, and viscous constraints:
+
+      dt_conv ~= lam * h / max(|v|)
+      dt_acou ~= lam * h / (c0 + max(|v|))
+      dt_visc ~= 0.125 * h^2 / nu
+
+    We use the minimum active constraint and clip to [dt_min, dt_max].
+    """
+    vmax = float(np.max(np.linalg.norm(v, axis=1))) if v.size else 0.0
+    h = float(h_tilde)
+    lam = float(lam)
+    c0 = float(max(c0, 0.0))
+    nu = float(max(nu, 0.0))
+    eps = 1e-12
+
+    dt_candidates = [float(dt_max)]
+    if vmax > eps:
+        dt_candidates.append(lam * h / vmax)
+    dt_candidates.append(lam * h / (c0 + vmax + eps))
+    if nu > eps:
+        dt_candidates.append(0.125 * h * h / nu)
+    dt = min(dt_candidates)
+    return float(np.clip(dt, dt_min, dt_max))
+
+
 def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> float:
     """
     Perform one weakly-compressible SPH (WCSPH) step using a simple version
@@ -225,12 +268,15 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
 
     # --- time step (CFL or fixed)
     if cfg.use_cfl:
-        dt = compute_dt_cfl(
-            state.vel,
+        c0 = float(cfg.eos_c0) if cfg.eos_c0 is not None else float(np.sqrt(max(cfg.eos_k, 0.0) / max(cfg.rho0, 1e-12)))
+        dt = compute_dt_wcsph_constraints(
+            v=state.vel,
             h_tilde=float(particle_size),
             lam=float(cfg.cfl_lambda),
             dt_min=float(cfg.dt_min),
             dt_max=float(cfg.dt_max),
+            c0=c0,
+            nu=float(cfg.kinematic_viscosity) if cfg.enable_viscosity else 0.0,
         )
     else:
         dt = float(cfg.dt_fixed)
@@ -312,12 +358,15 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     # (dt) CFL (Eq. 33) or fixed, applied to moving (fluid) particles
     if cfg.use_cfl:
         v_fluid = state.vel[~state.is_boundary]
-        dt = compute_dt_cfl_eq33(
-            v_fluid,
+        c0 = float(cfg.eos_c0) if cfg.eos_c0 is not None else float(np.sqrt(max(cfg.eos_k, 0.0) / max(cfg.rho0, 1e-12)))
+        dt = compute_dt_wcsph_constraints(
+            v=v_fluid,
             h_tilde=float(particle_size),
             lam=float(cfg.cfl_lambda),
             dt_min=float(cfg.dt_min),
             dt_max=float(cfg.dt_max),
+            c0=c0,
+            nu=float(cfg.kinematic_viscosity) if cfg.enable_viscosity else 0.0,
         )
     else:
         dt = float(cfg.dt_fixed)
@@ -342,6 +391,15 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
         h=h,
         rho0=cfg.rho0,
     )
+    if cfg.boundary_force_accel_clamp is not None and cfg.boundary_force_accel_clamp > 0.0:
+        clamp = float(cfg.boundary_force_accel_clamp)
+        a_pf = a_p[fluid_ids]
+        an = np.linalg.norm(a_pf, axis=1)
+        over = an > clamp
+        if np.any(over):
+            # Scale vectors to exactly clamp norm.
+            a_pf[over] = a_pf[over] * (clamp / an[over])[:, None]
+            a_p[fluid_ids] = a_pf
 
     # v(t+dt) = v* + dt * a_p  (Algorithm 1 structure)
     state.vel[fluid_ids] = state.vel[fluid_ids] + dt * a_p[fluid_ids]

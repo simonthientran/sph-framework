@@ -615,7 +615,8 @@ def step_pcisph_with_boundaries(
     else:
         min_eff = int(min_n_cfg)
 
-    active_mask = neigh_counts >= int(min_eff)
+    # Secondary safety guard: never classify zero-neighbor particles as pressure-active.
+    active_mask = neigh_counts >= max(1, int(min_eff))
     under_neighbors = ~active_mask
     inactive_mask_local = _inactive_mask_with_hold_steps(
         state_key=int(id(state)),

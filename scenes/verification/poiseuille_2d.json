@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "name": "poiseuille_2d",
+    "version": 1,
+    "seed": 0,
+    "dimensions": 2
+  },
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0],
+    "max": [0.4, 0.2],
+    "boundary_layers": 2,
+    "restitution": 0.0,
+    "friction": 0.1
+  },
+  "fluid": {
+    "type": "block",
+    "min": [0.04, 0.04],
+    "max": [0.36, 0.16],
+    "spacing": 0.02,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.045
+  },
+  "forces": {
+    "gravity": [0.1, 0.0]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 10000.0,
+      "c0": 20.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.02
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.1,
+    "dt_min": 1e-05,
+    "dt_max": 5e-05,
+    "dt_fixed": 5e-05,
+    "steps": 40,
+    "log_every": 10
+  },
+  "solver": {
+    "type": "wcsph"
+  },
+  "verification": {
+    "sample_every": 5,
+    "fast": {
+      "steps": 16,
+      "sample_every": 4
+    },
+    "poiseuille": {
+      "enable": true,
+      "gx": 0.1,
+      "nu": 0.02,
+      "y_extent_mode": "walls_inner",
+      "n_bins": 6,
+      "steady_window": 3,
+      "steady_eps": 0.01
+    },
+    "acceptance": {
+      "density_rel_err_mean_max": 0.05,
+      "density_rel_err_max_max": 0.2,
+      "mass_rel_drift_max": 1e-12,
+      "vmax_max": 2.0,
+      "pabs_max": 1500000.0,
+      "poiseuille_l2_max": 0.05,
+      "poiseuille_linf_max": 0.1,
+      "poiseuille_empty_bins_max": 0,
+      "poiseuille_vmax_ratio_min": 0.0,
+      "poiseuille_vmax_ratio_max": 0.3,
+      "require_poiseuille": true
+    }
+  },
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": false
+    }
+  }
+}

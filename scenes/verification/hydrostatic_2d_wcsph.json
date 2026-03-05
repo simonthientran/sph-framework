@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "name": "hydrostatic_2d_wcsph",
+    "version": 1,
+    "seed": 0,
+    "dimensions": 2
+  },
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0],
+    "max": [0.2, 0.2],
+    "boundary_layers": 2,
+    "restitution": 0.0,
+    "friction": 0.1
+  },
+  "fluid": {
+    "type": "block",
+    "min": [0.04, 0.04],
+    "max": [0.16, 0.16],
+    "spacing": 0.02,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.045
+  },
+  "forces": {
+    "gravity": [0.0, -9.81]
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 5000.0,
+      "c0": 20.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.05
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.1,
+    "dt_min": 1e-05,
+    "dt_max": 5e-05,
+    "dt_fixed": 5e-05,
+    "steps": 30,
+    "log_every": 5
+  },
+  "solver": {
+    "type": "wcsph"
+  },
+  "verification": {
+    "sample_every": 5,
+    "acceptance": {
+      "density_rel_err_mean_max": 0.05,
+      "mass_rel_drift_max": 1e-12,
+      "vmax_max": 2.0,
+      "pabs_max": 1000000.0
+    }
+  },
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": false
+    }
+  }
+}

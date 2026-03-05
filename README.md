@@ -23,6 +23,21 @@ Modular Smoothed Particle Hydrodynamics (SPH) framework in Python.
 - Generate validation plot:
   - `python tools/plot_vx_profile.py --input out/pipe_flow_2d/vx_profile_bins.csv --output out/pipe_flow_2d/vx_profile.png`
 
+## STL/CAD boundary import
+- Scene schema supports:
+  - `geometry.meshes[].path` (or `file`)
+  - transform: `scale`, `translate`, `rotate_euler_deg`
+  - units: `units_hint` (`"m"`, `"mm"`, `"cm"`)
+  - boundary generation: `boundary_spacing`, `layers`, `layer_mode`
+- Run with geometry diagnostics:
+  - `python -m sph.core.bootstrap scenes/examples/pipe_from_stl.json --debug-geom`
+
+## Solver verification mode (CI gate)
+- Run deterministic verification with pass/fail exit code:
+  - `python -m sph.core.bootstrap scenes/verification/hydrostatic_2d_wcsph.json --verify`
+  - `python -m sph.core.bootstrap scenes/verification/poiseuille_2d_wcsph.json --verify`
+- Reports are written to `out/verification/*.json`.
+
 ## PCISPH stability parameters (control logic)
 These knobs do **not** change the PCISPH equations; they only change control logic around them:
 

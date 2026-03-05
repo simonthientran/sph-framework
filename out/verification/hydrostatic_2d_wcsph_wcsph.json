@@ -1,0 +1,206 @@
+{
+  "scene_name": "hydrostatic_2d_wcsph",
+  "solver": "wcsph",
+  "seed": 0,
+  "steps": 30,
+  "sample_every": 5,
+  "overall_pass": true,
+  "checks": {
+    "no_non_finite": true,
+    "density_rel_err_mean_max": true,
+    "density_rel_err_max_max": true,
+    "mass_rel_drift_max": true,
+    "momentum_finite": true,
+    "energy_finite": true,
+    "vmax_max": true,
+    "pressure_abs_max": true
+  },
+  "gates": {
+    "no_non_finite": {
+      "value": true,
+      "min": null,
+      "max": null,
+      "pass": true
+    },
+    "density_rel_err_mean_max": {
+      "value": 0.0014479289630307487,
+      "min": null,
+      "max": 0.05,
+      "pass": true
+    },
+    "density_rel_err_max_max": {
+      "value": 0.0016157968842940135,
+      "min": null,
+      "max": 1.0,
+      "pass": true
+    },
+    "mass_rel_drift_max": {
+      "value": 0.0,
+      "min": null,
+      "max": 1e-12,
+      "pass": true
+    },
+    "momentum_finite": {
+      "value": 0.14741126917102962,
+      "min": null,
+      "max": null,
+      "pass": true
+    },
+    "energy_finite": {
+      "value": 608100535.8918787,
+      "min": null,
+      "max": null,
+      "pass": true
+    },
+    "vmax_max": {
+      "value": 0.010631346808210587,
+      "min": null,
+      "max": 2.0,
+      "pass": true
+    },
+    "pressure_abs_max": {
+      "value": 8078.984421470068,
+      "min": null,
+      "max": 1000000.0,
+      "pass": true
+    }
+  },
+  "summary": {
+    "density_rel_err_mean_max": 0.0014479289630307487,
+    "density_rel_err_max_max": 0.0016157968842940135,
+    "mass_rel_drift": 0.0,
+    "momentum_drift_norm": 0.14741126917102962,
+    "kinetic_energy_ratio": 608100535.8918787,
+    "vmax_max": 0.010631346808210587,
+    "pabs_max": 8078.984421470068,
+    "dt_min": 5e-05,
+    "dt_mean": 4.999999999999999e-05,
+    "dt_max": 5e-05,
+    "poiseuille_l2_last": null,
+    "poiseuille_linf_last": null,
+    "poiseuille_empty_bins_last": null,
+    "poiseuille_vmax_ratio_last": null,
+    "poiseuille_steady": null
+  },
+  "records": [
+    {
+      "step": 1,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0014444180351935074,
+        "mean": 0.0014444180351939461,
+        "max": 0.0014444180351945305
+      },
+      "vmax": 0.000510296430469702,
+      "pabs_max": 7222.090175972653,
+      "mass": 48.400000000000006,
+      "momentum": [
+        3.095486987938524e-15,
+        -0.009560760919854435
+      ],
+      "kinetic_energy": 2.334979015293316e-06
+    },
+    {
+      "step": 5,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0014385520300506868,
+        "mean": 0.0014445662031711834,
+        "max": 0.0014504357646238759
+      },
+      "vmax": 0.00245112011047428,
+      "pabs_max": 7252.17882311938,
+      "mass": 48.400000000000006,
+      "momentum": [
+        2.6574418663868893e-14,
+        -0.046579808622815765
+      ],
+      "kinetic_energy": 5.544702635803763e-05
+    },
+    {
+      "step": 10,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.001419095107041585,
+        "mean": 0.0014450369582435865,
+        "max": 0.00147037160838579
+      },
+      "vmax": 0.004865088861521713,
+      "pabs_max": 7351.858041928949,
+      "mass": 48.400000000000006,
+      "momentum": [
+        2.7976102337512465e-14,
+        -0.08768869793347728
+      ],
+      "kinetic_energy": 0.00019716104031598897
+    },
+    {
+      "step": 15,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0013892645059655705,
+        "mean": 0.0014457231434235088,
+        "max": 0.0015010685985579358
+      },
+      "vmax": 0.007094349160664594,
+      "pabs_max": 7505.342992789679,
+      "mass": 48.400000000000006,
+      "momentum": [
+        6.408330084032438e-14,
+        -0.11994311662735671
+      ],
+      "kinetic_energy": 0.000372655829653355
+    },
+    {
+      "step": 20,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0013534618519450987,
+        "mean": 0.0014465015870890067,
+        "max": 0.0015382939401689555
+      },
+      "vmax": 0.008941713348975013,
+      "pabs_max": 7691.469700844777,
+      "mass": 48.400000000000006,
+      "momentum": [
+        8.732157520934675e-14,
+        -0.14111322161333165
+      ],
+      "kinetic_energy": 0.0005259459767676873
+    },
+    {
+      "step": 25,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0013161168370693303,
+        "mean": 0.0014472624883122276,
+        "max": 0.0015777486066534722
+      },
+      "vmax": 0.01019476434533575,
+      "pabs_max": 7888.74303326736,
+      "mass": 48.400000000000006,
+      "momentum": [
+        1.242803603085374e-13,
+        -0.1502208582708799
+      ],
+      "kinetic_energy": 0.0006125311878434582
+    },
+    {
+      "step": 30,
+      "dt": 5e-05,
+      "density_rel_err": {
+        "min": 0.0012791260145869501,
+        "mean": 0.0014479289630307487,
+        "max": 0.0016157968842940135
+      },
+      "vmax": 0.010631346808210587,
+      "pabs_max": 8078.984421470068,
+      "mass": 48.400000000000006,
+      "momentum": [
+        1.5604400096288357e-13,
+        -0.14741126917102962
+      ],
+      "kinetic_energy": 0.0006081005358918787
+    }
+  ]
+}
