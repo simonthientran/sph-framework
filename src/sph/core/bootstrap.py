@@ -46,7 +46,12 @@ from sph.core.diagnostics import (
     InstabilityDetector,
     build_step_metrics,
 )
-from sph.core.startup_sanity import evaluate_startup_sanity, format_startup_sanity_block
+from sph.core.physics import compute_particle_mass, get_kernel_constants
+from sph.core.startup_sanity import (
+    evaluate_startup_sanity,
+    format_startup_density_block,
+    format_startup_sanity_block,
+)
 from sph.core.simulator import SimConfig, step_simulation
 from sph.core.state_builder import build_scene_state
 from sph.core.timestep import TimeStepController
@@ -56,7 +61,7 @@ from sph.core.vx_profile import (
     format_vx_profile_log_line,
 )
 from sph.io.csv_export import export_particles_csv
-from sph.io.vtk_export import export_particles_vtk_legacy
+from sph.io.exports import ExportManager
 from sph.neighbors.spatial_hash import SpatialHash
 from sph.verification.harness import run_verification
 
@@ -100,8 +105,8 @@ def _print_verify_table(report: dict) -> None:
         print(f"[VERIFY] {name:<30} {_fmt(value):<14} {_fmt(gmin):<14} {_fmt(gmax):<14} {'PASS' if p else 'FAIL'}")
 
 
-def _print_geom_step0_report(state, h: float, spacing: float, *, debug_geom: bool) -> None:
-    ns0 = SpatialHash(support_radius=float(h), dim=state.dim)
+def _print_geom_step0_report(state, support_radius: float, spacing: float, *, debug_geom: bool) -> None:
+    ns0 = SpatialHash(support_radius=float(support_radius), dim=state.dim)
     ns0.build(state.pos)
     fluid_ids = state.fluid_indices
     bound_ids = state.boundary_indices
@@ -139,22 +144,44 @@ def _print_geom_step0_report(state, h: float, spacing: float, *, debug_geom: boo
         print("[GEOM][STEP0] wrote boundary cloud CSV: out/geom/boundary_cloud_step0.csv")
 
 
-def _enforce_kernel_support_radius(scene: dict) -> None:
+def _resolve_kernel_parameters(scene: dict) -> tuple[float, float]:
+    """
+    Resolve smoothing length (h) and support radius (supp).
+    Enforce supp = 2 * h.
+    """
     neighbors_cfg = scene.get("neighbors", {})
     if not neighbors_cfg:
-        return
-    support_radius = float(neighbors_cfg.get("support_radius", 0.0))
-    smoothing_h = neighbors_cfg.get("smoothing_length", neighbors_cfg.get("h", None))
-    if smoothing_h is None:
-        return
-    required = float(2.0 * float(smoothing_h))
-    if support_radius < required:
-        print("[STARTUP][FIX]")
-        print(
-            f"support_radius ({support_radius:.6g}) < required kernel support ({required:.6g}); "
-            f"correcting support_radius to {required:.6g}"
-        )
-        neighbors_cfg["support_radius"] = required
+        # Fallback or error?
+        # If no neighbors config, we can't proceed really.
+        # But maybe existing tests rely on partial config?
+        # We'll assume if missing, it fails later.
+        return 0.0, 0.0
+
+    h_smooth = neighbors_cfg.get("smoothing_length", neighbors_cfg.get("h"))
+    h_supp = neighbors_cfg.get("support_radius")
+
+    if h_smooth is None and h_supp is None:
+        raise ValueError("Scene must provide neighbors.smoothing_length (or h) OR neighbors.support_radius")
+
+    if h_smooth is not None:
+        h_smooth = float(h_smooth)
+        expected_supp = 2.0 * h_smooth
+        if h_supp is not None:
+            val_supp = float(h_supp)
+            if abs(val_supp - expected_supp) > 1e-9:
+                print(f"[BOOT][FIX] support_radius {val_supp:.6g} != 2*h. Overwriting with {expected_supp:.6g}")
+        h_supp = expected_supp
+    else:
+        # Only support_radius provided
+        h_supp = float(h_supp)
+        h_smooth = h_supp / 2.0
+        # print(f"[BOOT][INFO] derived smoothing_length h={h_smooth:.6g} from support_radius")
+
+    # Update scene for consistency
+    neighbors_cfg["smoothing_length"] = h_smooth
+    neighbors_cfg["support_radius"] = h_supp
+    
+    return h_smooth, h_supp
 
 
 def main() -> int:
@@ -171,7 +198,30 @@ def main() -> int:
     # Provide scene directory so relative asset paths (e.g., STL files) resolve predictably.
     scene["__scene_dir__"] = str(scene_path.parent)
     scene["__debug_geom__"] = bool(args.debug_geom)
-    _enforce_kernel_support_radius(scene)
+    
+    # Resolve physics constants
+    h, support_radius = _resolve_kernel_parameters(scene)
+    
+    # [STARTUP][PHYSICS] report
+    dim = int(scene["meta"]["dimensions"])
+    spacing = float(scene["fluid"]["spacing"])
+    rho0 = float(scene["material"]["rho0"])
+    
+    pmass = compute_particle_mass(spacing, rho0, dim)
+    kconsts = get_kernel_constants(dim, h)
+    
+    print("[STARTUP][PHYSICS]")
+    print(f"  dim={dim}")
+    print(f"  dx={spacing:.6e}")
+    print(f"  h={h:.6e}")
+    print(f"  support_radius={support_radius:.6e} (2*h)")
+    print(f"  h/dx={h/spacing:.4f}")
+    print(f"  rho0={rho0:.2f}")
+    print(f"  particle_mass={pmass:.6e}")
+    print(f"  kernel_constant={kconsts['normalization_constant']:.6e}")
+    
+    if (h/spacing) < 1.0 or (h/spacing) > 2.0:
+        print(f"[STARTUP][WARN] h/dx = {h/spacing:.4f} is outside stable range [1.0, 2.0]")
 
     if bool(args.verify):
         solver_name = str(scene.get("solver", {}).get("type", "wcsph")).lower()
@@ -205,7 +255,7 @@ def main() -> int:
 
     dim = int(state.dim)
     spacing = float(scene["fluid"]["spacing"])
-    h = float(scene["neighbors"]["support_radius"])
+    # h and support_radius already resolved above
     rho0 = float(scene["material"]["rho0"])
 
     # Gravity from scene (fallback: -9.81 in y for 2D)
@@ -232,7 +282,8 @@ def main() -> int:
     kinematic_viscosity = float(visc_cfg.get("nu", 0.0))
 
     cfg = SimConfig(
-        support_radius=h,
+        support_radius=support_radius,
+        smoothing_length=h,
         rho0=rho0,
         eos_k=float(scene.get("material", {}).get("eos", {}).get("k", 500.0)),
         g=g,
@@ -287,16 +338,24 @@ def main() -> int:
     sanity = evaluate_startup_sanity(
         scene=scene,
         state=state,
-        h=h,
+        h=h,  # smoothing length
         spacing=spacing,
         rho0=rho0,
         startup_cfg=startup_cfg,
     )
     print(format_startup_sanity_block(sanity))
     if sanity.auto_tuned_support_radius is not None:
-        h = float(sanity.auto_tuned_support_radius)
-        print(f"[STARTUP][FIX] support_radius auto-tuned to {h:.6e}")
-        cfg = replace(cfg, support_radius=h)
+        # Note: auto_tuned_support_radius in sanity likely referred to support_radius.
+        # If sanity logic returns a new support radius, we must derive h from it.
+        new_supp = float(sanity.auto_tuned_support_radius)
+        new_h = new_supp / 2.0
+        print(f"[STARTUP][FIX] support_radius auto-tuned to {new_supp:.6e} (h={new_h:.6e})")
+        cfg = replace(cfg, support_radius=new_supp, smoothing_length=new_h)
+        h = new_h
+        support_radius = new_supp
+
+    kconsts = get_kernel_constants(dim, h)
+    print(format_startup_density_block(sanity, pmass, kconsts["normalization_constant"]))
 
     init_rel_err = float(sanity.rho_rel_err_mean)
     dt_ramp_active = bool(dt_ramp_enabled and init_rel_err > density_warn_threshold and cfg.use_cfl)
@@ -340,6 +399,7 @@ def main() -> int:
     vtk_enabled = bool(vtk_cfg.get("enable", False))
     vtk_every = int(vtk_cfg.get("every", 10))
     vtk_dir = Path(vtk_cfg.get("dir", "out/vtk"))
+    export_manager = ExportManager(vtk_enabled=vtk_enabled, vtk_every=vtk_every, vtk_dir=vtk_dir)
     diag_cfg = export_cfg.get("diagnostics", {})
     diag_csv_enabled = bool(diag_cfg.get("enable", False))
     diag_csv_path = Path(str(diag_cfg.get("path", "out/diagnostics/step_metrics.csv")))
@@ -375,10 +435,9 @@ def main() -> int:
     # Export step 0000 if enabled (pre-step snapshot)
     if csv_enabled:
         export_particles_csv(csv_dir / "particles_step_0000.csv", state)
-    if vtk_enabled:
-        export_particles_vtk_legacy(vtk_dir / "particles_step_0000.vtk", state)
+    export_manager.maybe_export_initial(state)
     if args.debug_geom or scene.get("geometry", {}).get("meshes"):
-        _print_geom_step0_report(state, h=h, spacing=spacing, debug_geom=bool(args.debug_geom))
+        _print_geom_step0_report(state, support_radius=support_radius, spacing=spacing, debug_geom=bool(args.debug_geom))
 
     controller = TimeStepController(
         use_cfl=bool(cfg.use_cfl),
@@ -434,7 +493,7 @@ def main() -> int:
         )
 
         # Diagnostics neighbor search on current positions (read-only)
-        ns = SpatialHash(support_radius=h, dim=dim)
+        ns = SpatialHash(support_radius=support_radius, dim=dim)
         ns.build(state.pos)
         sim_time += float(dt)
         metrics, neigh_counts = build_step_metrics(
@@ -472,8 +531,7 @@ def main() -> int:
         if csv_enabled and ((s + 1) % max(1, csv_every) == 0):
             export_particles_csv(csv_dir / f"particles_step_{metrics.step:04d}.csv", state)
 
-        if vtk_enabled and ((s + 1) % max(1, vtk_every) == 0):
-            export_particles_vtk_legacy(vtk_dir / f"particles_step_{metrics.step:04d}.vtk", state)
+        export_manager.maybe_export(step=metrics.step, state=state, neighbor_count=neigh_counts)
 
     print("[BOOT] done")
     return 0

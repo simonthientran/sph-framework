@@ -560,10 +560,11 @@ def step_pcisph_with_boundaries(
       boundary remains static
     - Return dt.
     """
-    h = float(cfg.support_radius)
+    h = float(cfg.smoothing_length)
+    support_radius = float(cfg.support_radius)
 
     # (1) Neighbor search on all particles (fluid + boundary)
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(support_radius=support_radius, dim=state.dim)
     ns.build(state.pos)
 
     fluid_ids = state.fluid_indices

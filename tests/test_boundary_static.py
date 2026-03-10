@@ -22,6 +22,7 @@ def test_boundary_particles_remain_static():
 
     cfg = SimConfig(
         support_radius=0.04,
+        smoothing_length=0.02,
         rho0=1000.0,
         eos_k=2000.0,
         g=np.array([0.0, -9.81]),

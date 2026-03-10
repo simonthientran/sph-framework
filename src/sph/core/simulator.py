@@ -28,6 +28,7 @@ class SimConfig:
 
     # Kernel / neighborhood
     support_radius: float
+    smoothing_length: float
     rho0: float
 
     # State equation parameter: p_i = k (rho_i - rho0)
@@ -289,10 +290,10 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
     used by existing tests; we only share the SimConfig definition with
     the boundary-aware variant below.
     """
-    h = float(cfg.support_radius)
+    h = float(cfg.smoothing_length)
 
     # --- neighbor search
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(support_radius=float(cfg.support_radius), dim=state.dim)
     ns.build(state.pos)
 
     # --- density reconstruction
@@ -373,10 +374,10 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
     The underlying equations and ordering follow the tutorial; we only
     add the explicit separation of fluid vs boundary particles.
     """
-    h = float(cfg.support_radius)
+    h = float(cfg.smoothing_length)
 
     # neighbor search over ALL particles (fluid + boundary)
-    ns = SpatialHash(support_radius=h, dim=state.dim)
+    ns = SpatialHash(support_radius=float(cfg.support_radius), dim=state.dim)
     ns.build(state.pos)
 
     # (1) density including boundary contribution (Eq. 83)

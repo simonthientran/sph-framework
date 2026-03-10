@@ -31,7 +31,11 @@ import numpy as np
 from sph.core.state import ParticleState
 
 
-def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
+def export_particles_vtk_legacy(
+    path: str | Path,
+    state: ParticleState,
+    neighbor_count: np.ndarray | None = None,
+) -> None:
     """
     Export particles as VTK legacy ASCII PolyData.
 
@@ -42,7 +46,8 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
         - rho (float)
         - p (float)
         - m (float)
-        - v (VECTORS, float) (pad z=0 for 2D)
+        - velocity (VECTORS, float) (pad z=0 for 2D)
+        - neighbor_count (optional scalar, int)
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +72,11 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
     rho = state.rho.astype(np.float64, copy=False)
     p = state.p.astype(np.float64, copy=False)
     m = state.mass.astype(np.float64, copy=False)
+    if neighbor_count is not None:
+        neigh = np.asarray(neighbor_count)
+        if neigh.shape != (n,):
+            raise ValueError(f"neighbor_count shape {neigh.shape} != ({n},)")
+        neigh = neigh.astype(np.int32, copy=False)
 
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write("# vtk DataFile Version 3.0\n")
@@ -108,9 +118,14 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
         for i in range(n):
             f.write(f"{float(m[i]):.17g}\n")
 
-        f.write("VECTORS v float\n")
+        f.write("VECTORS velocity float\n")
         for i in range(n):
             vx, vy, vz = vel3[i]
             f.write(f"{vx:.17g} {vy:.17g} {vz:.17g}\n")
+        if neighbor_count is not None:
+            f.write("SCALARS neighbor_count int 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{int(neigh[i])}\n")
 
 

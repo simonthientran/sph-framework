@@ -12,6 +12,7 @@ from sph.boundary.mesh_sampling import (
     sample_mesh_surface_uniform,
 )
 from sph.core.state import ParticleState
+from sph.core.physics import compute_particle_mass
 from sph.geometry.stl import load_stl_mesh
 
 
@@ -121,13 +122,13 @@ def build_scene_state(scene: dict) -> ParticleState:
     if dim != 2:
         raise ValueError("This boundary builder currently supports only 2D (dim=2).")
 
-    # --- scene parameters
-    spacing = float(scene["fluid"]["spacing"])
+    # --- scene parameters (dimension-aware)
+    dx = float(scene["fluid"]["spacing"])  # particle spacing = dx
     rho0 = float(scene["material"]["rho0"])
 
-    # support radius used to decide how many boundary layers we need
-    h = float(scene["neighbors"]["support_radius"])
-    layers = int(scene.get("domain", {}).get("boundary_layers", int(np.ceil(h / spacing)) + 1))
+    # support_radius = 2h (convention enforced in bootstrap); used for boundary layer extent
+    support_radius = float(scene["neighbors"]["support_radius"])
+    layers = int(scene.get("domain", {}).get("boundary_layers", int(np.ceil(support_radius / dx)) + 1))
 
     domain_min = np.array(scene["domain"]["min"], dtype=np.float64)
     domain_max = np.array(scene["domain"]["max"], dtype=np.float64)
@@ -140,15 +141,16 @@ def build_scene_state(scene: dict) -> ParticleState:
     fmin = np.array(fluid["min"], dtype=np.float64)
     fmax = np.array(fluid["max"], dtype=np.float64)
 
-    fluid_pos = _grid_points_2d(fmin, fmax, spacing)
+    fluid_pos = _grid_points_2d(fmin, fmax, dx)
 
     v0 = np.array(fluid.get("initial_velocity", [0.0, 0.0]), dtype=np.float64)
     fluid_vel = np.repeat(v0[None, :], fluid_pos.shape[0], axis=0)
 
     # --- procedural boundary sampling (static)
-    boundary_pos = _sample_box_boundary_2d(domain_min, domain_max, spacing, layers=layers)
+    boundary_pos = _sample_box_boundary_2d(domain_min, domain_max, dx, layers=layers)
     boundary_vel = np.zeros((boundary_pos.shape[0], dim), dtype=np.float64)
-    boundary_mass = np.full((boundary_pos.shape[0],), rho0 * (spacing**dim), dtype=np.float64)
+    boundary_mass_val = compute_particle_mass(dx, rho0, dim)
+    boundary_mass = np.full((boundary_pos.shape[0],), boundary_mass_val, dtype=np.float64)
     boundary_rho = np.full((boundary_pos.shape[0],), rho0, dtype=np.float64)
     boundary_p = np.zeros((boundary_pos.shape[0],), dtype=np.float64)
     boundary_is = np.ones((boundary_pos.shape[0],), dtype=np.bool_)
@@ -195,7 +197,7 @@ def build_scene_state(scene: dict) -> ParticleState:
                 f"{mesh.normal_consistency_ratio * 100.0:.1f}%"
             )
 
-        boundary_spacing = float(mesh_cfg.get("boundary_spacing", mesh_cfg.get("spacing", spacing)))
+        boundary_spacing = float(mesh_cfg.get("boundary_spacing", mesh_cfg.get("spacing", dx)))
         layer_count = int(mesh_cfg.get("layers", 1))
         layer_mode = str(mesh_cfg.get("layer_mode", "outward")).lower()
 
@@ -208,7 +210,7 @@ def build_scene_state(scene: dict) -> ParticleState:
             direction=layer_mode,
         )
         overlap_mode = str(mesh_cfg.get("overlap_resolution", "warn")).lower()
-        overlap_threshold = float(mesh_cfg.get("overlap_threshold", 0.5 * spacing))
+        overlap_threshold = float(mesh_cfg.get("overlap_threshold", 0.5 * dx))
         overlap_before = compute_fluid_boundary_distance_stats(
             fluid_positions=fluid_pos,
             boundary_positions=pts3[:, :dim],
@@ -229,7 +231,8 @@ def build_scene_state(scene: dict) -> ParticleState:
 
         bpos = pts3[:, :dim].astype(np.float64)
         bvel = np.zeros((bpos.shape[0], dim), dtype=np.float64)
-        bmass = np.full((bpos.shape[0],), rho0 * (boundary_spacing**dim), dtype=np.float64)
+        bmass_val = compute_particle_mass(boundary_spacing, rho0, dim)
+        bmass = np.full((bpos.shape[0],), bmass_val, dtype=np.float64)
         brho = np.full((bpos.shape[0],), rho0, dtype=np.float64)
         bp = np.zeros((bpos.shape[0],), dtype=np.float64)
         bis = np.ones((bpos.shape[0],), dtype=np.bool_)
@@ -258,7 +261,8 @@ def build_scene_state(scene: dict) -> ParticleState:
     # --- combine fluid + all boundaries
     pos_parts = [fluid_pos, boundary_pos]
     vel_parts = [fluid_vel, boundary_vel]
-    mass_parts = [np.full((fluid_pos.shape[0],), rho0 * (spacing**dim), dtype=np.float64), boundary_mass]
+    fmass_val = compute_particle_mass(dx, rho0, dim)
+    mass_parts = [np.full((fluid_pos.shape[0],), fmass_val, dtype=np.float64), boundary_mass]
     rho_parts = [np.full((fluid_pos.shape[0],), rho0, dtype=np.float64), boundary_rho]
     p_parts = [np.zeros((fluid_pos.shape[0],), dtype=np.float64), boundary_p]
     is_parts = [np.zeros((fluid_pos.shape[0],), dtype=np.bool_), boundary_is]
@@ -283,7 +287,7 @@ def build_scene_state(scene: dict) -> ParticleState:
     state.validate()
 
     # Overlap diagnostic between fluid and boundary particles at startup.
-    overlap_threshold = 0.5 * spacing
+    overlap_threshold = 0.5 * dx
     overlap_stats = compute_fluid_boundary_distance_stats(
         fluid_positions=state.pos[state.fluid_indices],
         boundary_positions=state.pos[state.boundary_indices],
@@ -369,7 +373,7 @@ def build_fluid_block(scene: dict) -> ParticleState:
     # This preserves the same volumetric mass distribution and therefore
     # keeps density-related physics identical.
     rho0 = float(scene["material"]["rho0"])
-    mass_value = rho0 * (spacing ** dim)
+    mass_value = compute_particle_mass(spacing, rho0, dim)
     mass = np.full((n,), mass_value, dtype=np.float64)
 
     rho = np.full((n,), rho0, dtype=np.float64)

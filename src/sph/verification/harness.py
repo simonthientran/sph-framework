@@ -40,8 +40,14 @@ def _build_cfg(scene: dict) -> SimConfig:
     eos_c0 = scene.get("material", {}).get("eos", {}).get("c0", None)
     eos_c0 = float(eos_c0) if eos_c0 is not None else None
     visc_cfg = scene.get("material", {}).get("viscosity", {})
+    neighbors_cfg = scene["neighbors"]
+    support_radius = float(neighbors_cfg["support_radius"])
+    smoothing_length = float(
+        neighbors_cfg.get("smoothing_length") or neighbors_cfg.get("h") or support_radius / 2.0
+    )
     return SimConfig(
-        support_radius=float(scene["neighbors"]["support_radius"]),
+        support_radius=support_radius,
+        smoothing_length=smoothing_length,
         rho0=rho0,
         eos_k=eos_k,
         eos_c0=eos_c0,

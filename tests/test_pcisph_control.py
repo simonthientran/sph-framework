@@ -33,6 +33,7 @@ def test_inactive_particles_are_not_frozen_advect_normally():
     g = np.array([0.0, -9.81], dtype=np.float64)
     cfg = SimConfig(
         support_radius=0.001,  # tiny => 0 neighbors
+        smoothing_length=0.0005,
         rho0=1000.0,
         eos_k=500.0,
         g=g,

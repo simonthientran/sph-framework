@@ -21,6 +21,7 @@ def test_boundary_push_out_epsilon_and_velocity_not_killed():
 
     cfg = SimConfig(
         support_radius=0.045,
+        smoothing_length=0.0225,
         rho0=1000.0,
         eos_k=500.0,
         g=np.array([0.0, -9.81], dtype=np.float64),
@@ -60,6 +61,7 @@ def test_boundary_push_is_clamped_by_fraction_of_dx():
 
     cfg = SimConfig(
         support_radius=0.045,
+        smoothing_length=0.0225,
         rho0=1000.0,
         eos_k=500.0,
         g=np.array([0.0, -9.81], dtype=np.float64),

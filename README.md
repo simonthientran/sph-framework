@@ -49,6 +49,19 @@ Modular Smoothed Particle Hydrodynamics (SPH) framework in Python.
   - `neighbor_histogram_every` (default `time.log_every`)
   - `instability_rho_min_frac`, `instability_rho_max_frac`, `instability_neigh_min`, `instability_vmax`
 
+## Open VTK in ParaView
+- Enable scene export:
+  - `export.vtk.enable: true`
+  - `export.vtk.every: <N>`
+  - `export.vtk.dir: out/vtk`
+- Run scene bootstrap; files are written as `particles_000000.vtk`, `particles_000200.vtk`, etc.
+- In ParaView: `File -> Open` a `.vtk` file in `out/vtk`, then `Apply`.
+- Useful point arrays:
+  - `velocity` (vector)
+  - `rho` (scalar)
+  - `p` (scalar)
+  - `neighbor_count` (scalar, if diagnostics are available for that step)
+
 ## PCISPH stability parameters (control logic)
 These knobs do **not** change the PCISPH equations; they only change control logic around them:
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from sph.core.state import ParticleState
+from sph.core.physics import compute_particle_mass
 from sph.boundary.mesh_sampling import generate_boundary_layers, sample_mesh_surface_uniform
 from sph.geometry.mesh import Mesh
 
@@ -43,7 +44,7 @@ def create_boundary_particles_from_mesh(
 
     vel = np.zeros((n, dim), dtype=np.float64)
     acc = np.zeros((n, dim), dtype=np.float64)
-    mass_value = rho0 * (spacing**dim)
+    mass_value = compute_particle_mass(spacing, rho0, dim)
     mass = np.full((n,), mass_value, dtype=np.float64)
     rho = np.full((n,), rho0, dtype=np.float64)
     p = np.zeros((n,), dtype=np.float64)

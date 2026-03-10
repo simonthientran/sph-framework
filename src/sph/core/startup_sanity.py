@@ -12,6 +12,7 @@ from sph.sph.density import compute_density_with_boundaries_eq83
 
 @dataclass(frozen=True)
 class StartupSanityReport:
+    dx_nominal: float  # scene spacing (dx) used for mass
     dx_min: float
     dx_mean: float
     dx_max: float
@@ -19,6 +20,9 @@ class StartupSanityReport:
     h_over_dx: float
     support_radius_expected: float
     expected_neighbors_2d: float
+    rho_min: float
+    rho_avg: float
+    rho_max: float
     rho_rel_err_min: float
     rho_rel_err_mean: float
     rho_rel_err_max: float
@@ -62,7 +66,7 @@ def evaluate_startup_sanity(
     startup_cfg = startup_cfg or {}
     sample_size = int(startup_cfg.get("dx_sample_size", 128))
     density_warn_rel = float(startup_cfg.get("density_error_warn_rel", 0.05))
-    density_abort_rel = float(startup_cfg.get("density_error_abort_rel", density_warn_rel))
+    density_abort_rel = float(startup_cfg.get("density_error_abort_rel", 0.20))
     auto_tune = bool(startup_cfg.get("auto_tune_support_radius", True))
     target_h_over_dx = float(startup_cfg.get("support_radius_target_h_over_dx_2d", 1.3))
     abort_on_units_mismatch = bool(startup_cfg.get("abort_on_units_mismatch", True))
@@ -81,27 +85,34 @@ def evaluate_startup_sanity(
     smoothing_h = neighbors_cfg.get("smoothing_length", neighbors_cfg.get("h", None))
     required_support_radius = None
     support_radius_mismatch = False
+    support_radius = float(2.0 * h)  # cubic spline convention: support = 2h
+    scene_support_radius = neighbors_cfg.get("support_radius")
     if smoothing_h is not None:
         required_support_radius = float(2.0 * float(smoothing_h))
-        support_radius_mismatch = bool(h < required_support_radius)
-
-    # Reference convention requested by verification notes: cubic spline support radius = 2h.
-    support_radius_expected = float(2.0 * h)
+        # Compare scene's support_radius (if provided) with kernel requirement 2h
+        actual_supp = float(scene_support_radius) if scene_support_radius is not None else support_radius
+        support_radius_mismatch = bool(actual_supp < required_support_radius)
+    
     if np.isfinite(dx_mean) and dx_mean > 0.0 and state.dim == 2:
-        expected_neighbors_2d = float(np.pi * (support_radius_expected / dx_mean) ** 2)
+        expected_neighbors_2d = float(np.pi * (support_radius / dx_mean) ** 2)
     else:
         expected_neighbors_2d = float("nan")
 
     # Keep density reconstruction aligned with current solver neighborhood behavior.
-    ns = SpatialHash(support_radius=float(h), dim=state.dim)
+    ns = SpatialHash(support_radius=support_radius, dim=state.dim)
     ns.build(state.pos)
     rho_init = compute_density_with_boundaries_eq83(state=state, neighbor_search=ns, h=h, rho0=rho0)
     if fluid_ids.size:
-        rel = np.abs((rho_init[fluid_ids] - rho0) / rho0)
+        rho_fluid = rho_init[fluid_ids]
+        rho_min = float(np.min(rho_fluid))
+        rho_avg = float(np.mean(rho_fluid))
+        rho_max = float(np.max(rho_fluid))
+        rel = np.abs((rho_fluid - rho0) / rho0)
         rho_rel_err_min = float(np.min(rel))
         rho_rel_err_mean = float(np.mean(rel))
         rho_rel_err_max = float(np.max(rel))
     else:
+        rho_min = rho_avg = rho_max = float(rho0)
         rho_rel_err_min = 0.0
         rho_rel_err_mean = 0.0
         rho_rel_err_max = 0.0
@@ -172,9 +183,10 @@ def evaluate_startup_sanity(
 
     auto_tuned_support_radius = None
     if auto_tune and np.isfinite(dx_mean) and dx_mean > 0.0:
-        tuned = float(target_h_over_dx * dx_mean)
-        if tuned > h:
-            auto_tuned_support_radius = tuned
+        tuned_h = float(target_h_over_dx * dx_mean)
+        if tuned_h > h:
+            # We return the suggested SUPPORT RADIUS (2*h)
+            auto_tuned_support_radius = 2.0 * tuned_h
 
     should_abort = False
     abort_reason = None
@@ -186,13 +198,17 @@ def evaluate_startup_sanity(
         abort_reason = "high_initial_density_error"
 
     return StartupSanityReport(
+        dx_nominal=spacing,
         dx_min=dx_min,
         dx_mean=dx_mean,
         dx_max=dx_max,
         h=h,
         h_over_dx=h_over_dx,
-        support_radius_expected=support_radius_expected,
+        support_radius_expected=support_radius,
         expected_neighbors_2d=expected_neighbors_2d,
+        rho_min=rho_min,
+        rho_avg=rho_avg,
+        rho_max=rho_max,
         rho_rel_err_min=rho_rel_err_min,
         rho_rel_err_mean=rho_rel_err_mean,
         rho_rel_err_max=rho_rel_err_max,
@@ -211,15 +227,35 @@ def evaluate_startup_sanity(
     )
 
 
+def format_startup_density_block(
+    report: StartupSanityReport,
+    particle_mass: float,
+    kernel_constant: float,
+) -> str:
+    """Format [STARTUP][DENSITY] block with rho stats and physical scaling."""
+    lines = [
+        "[STARTUP][DENSITY]",
+        f"  rho(min/avg/max) = {report.rho_min:.2f}/{report.rho_avg:.2f}/{report.rho_max:.2f}",
+        f"  rho_rel_error_avg = {report.rho_rel_err_mean:.2%}",
+        f"  dx={report.dx_nominal:.6e} h={report.h:.6e} h/dx={report.h / max(report.dx_nominal, 1e-12):.4f} "
+        f"particle_mass={particle_mass:.6e} kernel_constant={kernel_constant:.6e}",
+    ]
+    if report.rho_rel_err_mean > 0.05:
+        lines.append(f"  [WARN] avg density error {report.rho_rel_err_mean:.2%} > 5%")
+    if report.rho_rel_err_mean > 0.20:
+        lines.append(f"  [ABORT] avg density error {report.rho_rel_err_mean:.2%} > 20%")
+    return "\n".join(lines)
+
+
 def format_startup_sanity_block(report: StartupSanityReport) -> str:
     lines = [
         "[STARTUP][SANITY]",
         (
-            f"  dx(nn) min/mean/max = {report.dx_min:.6e}/{report.dx_mean:.6e}/{report.dx_max:.6e} "
-            f"| h={report.h:.6e} | h/dx={report.h_over_dx:.3f}"
+            f"  dx(nominal)={report.dx_nominal:.6e} dx(nn) min/mean/max = {report.dx_min:.6e}/{report.dx_mean:.6e}/{report.dx_max:.6e} "
+            f"| h={report.h:.6e} | support_radius=2h={report.support_radius_expected:.6e} | h/dx={report.h_over_dx:.3f}"
         ),
         (
-            f"  support_radius(cubic-spline ref)=2h={report.support_radius_expected:.6e} "
+            f"  support_radius=2h (convention enforced) "
             f"| expected_neighbors_2d~{report.expected_neighbors_2d:.2f}"
         ),
         (
@@ -232,7 +268,7 @@ def format_startup_sanity_block(report: StartupSanityReport) -> str:
     ]
     if report.support_radius_mismatch and report.required_support_radius is not None:
         lines.append(
-            f"  support check: support_radius={report.h:.6e} < required(2h)={report.required_support_radius:.6e}"
+            f"  support check: support_radius={report.support_radius_expected:.6e} < required(2h)={report.required_support_radius:.6e}"
         )
     if report.boundary_layer_overlap:
         lines.append(
