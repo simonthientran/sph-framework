@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "pipe_flow_1phase_2d",
-    "version": 1,
+    "version": 2,
     "seed": 0,
     "dimensions": 2
   },
@@ -27,10 +27,10 @@
   },
   "neighbors": {
     "type": "spatial_hash",
-    "support_radius": 0.045
+    "support_radius": 0.032
   },
   "forces": {
-    "gravity": [0.1, 0.0]
+    "gravity": [0.5, 0.0]
   },
   "material": {
     "rho0": 1000.0,
@@ -45,11 +45,11 @@
   },
   "time": {
     "mode": "cfl",
-    "cfl": 0.4,
+    "cfl": 0.25,
     "dt_min": 1e-05,
-    "dt_max": 0.0005,
-    "dt_fixed": 0.0005,
-    "steps": 8000,
+    "dt_max": 0.00025,
+    "dt_fixed": 0.00025,
+    "steps": 4000,
     "log_every": 50
   },
   "solver": {
@@ -59,8 +59,8 @@
     "vx_profile": {
       "enable": true,
       "y_extent_mode": "walls_inner",
-      "n_bins": 8,
-      "use_x_slice": false,
+      "n_bins": 12,
+      "use_x_slice": true,
       "x_slice_width": 0.2,
       "csv": {
         "enable": true,
@@ -72,13 +72,13 @@
   },
   "export": {
     "csv": {
-      "enable": false,
-      "every": 10,
+      "enable": true,
+      "every": 100,
       "dir": "out/csv"
     },
     "vtk": {
-      "enable": false,
-      "every": 10,
+      "enable": true,
+      "every": 100,
       "dir": "out/vtk"
     }
   }
