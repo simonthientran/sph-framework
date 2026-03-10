@@ -9,7 +9,14 @@
     "type": "box",
     "min": [0.0, 0.0],
     "max": [2.0, 0.2],
-    "boundary_layers": 3
+    "boundary_layers": 3,
+    "periodic_axes": [true, false]
+  },
+  "boundary": {
+    "restitution": 0.0,
+    "tangent_friction": 0.1,
+    "normal_damping": 0.2,
+    "max_penetration_push_frac_of_dx": 0.25
   },
   "fluid": {
     "type": "block",

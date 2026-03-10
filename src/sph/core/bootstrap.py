@@ -357,7 +357,7 @@ def main() -> int:
     kconsts = get_kernel_constants(dim, h)
     print(format_startup_density_block(sanity, pmass, kconsts["normalization_constant"]))
 
-    init_rel_err = float(sanity.rho_rel_err_mean)
+    init_rel_err = float(sanity.effective_rho_rel_err_mean)
     dt_ramp_active = bool(dt_ramp_enabled and init_rel_err > density_warn_threshold and cfg.use_cfl)
     if init_rel_err > density_warn_threshold:
         print(
