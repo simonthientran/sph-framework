@@ -60,7 +60,10 @@ def build_step_metrics(
     vnorm = np.linalg.norm(state.vel[fluid_ids], axis=1)
     rho = state.rho[fluid_ids]
     p = state.p[fluid_ids]
-    neigh_counts = np.array([len(neighbor_search.query(int(i), state.pos)) for i in fluid_ids], dtype=np.int64)
+    # Neighbor counts for ALL particles (for VTK export); metrics use fluid-only
+    n = state.pos.shape[0]
+    neigh_counts_all = np.array([len(neighbor_search.query(i, state.pos)) for i in range(n)], dtype=np.int64)
+    neigh_counts_fluid = neigh_counts_all[fluid_ids]
 
     m = StepMetrics(
         step=int(step),
@@ -73,9 +76,9 @@ def build_step_metrics(
         p_min=float(np.min(p)),
         p_avg=float(np.mean(p)),
         p_max=float(np.max(p)),
-        neigh_min=int(np.min(neigh_counts)),
-        neigh_avg=float(np.mean(neigh_counts)),
-        neigh_max=int(np.max(neigh_counts)),
+        neigh_min=int(np.min(neigh_counts_fluid)),
+        neigh_avg=float(np.mean(neigh_counts_fluid)),
+        neigh_max=int(np.max(neigh_counts_fluid)),
     )
-    return m, neigh_counts
+    return m, neigh_counts_all
 

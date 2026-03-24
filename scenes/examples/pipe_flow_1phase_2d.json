@@ -73,13 +73,13 @@
   "export": {
     "csv": {
       "enable": true,
-      "every": 100,
-      "dir": "out/csv"
+      "every": 20,
+      "dir": "out/pipe_flow_1phase_full/csv"
     },
     "vtk": {
       "enable": true,
-      "every": 100,
-      "dir": "out/vtk"
+      "every": 20,
+      "dir": "out/pipe_flow_1phase_full/vtk"
     }
   }
 }

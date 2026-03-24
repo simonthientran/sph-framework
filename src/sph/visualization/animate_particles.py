@@ -34,7 +34,6 @@ Typical use
 python -m sph.visualization.animate_particles out/csv --color-by vmag
 python -m sph.visualization.animate_particles out/csv --color-by rho --interval 80
 python -m sph.visualization.animate_particles out/csv --color-by p --save out/anim.gif
-python -m sph.visualization.animate_particles out/csv --vectors
 """
 
 import argparse
@@ -99,17 +98,6 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Optional output path (.gif or .mp4) to save animation",
-    )
-    parser.add_argument(
-        "--vectors",
-        action="store_true",
-        help="Draw velocity vectors for fluid particles (stride every 5th)",
-    )
-    parser.add_argument(
-        "--vector-stride",
-        type=int,
-        default=5,
-        help="Use every n-th fluid particle for velocity vectors (default: 5)",
     )
     return parser.parse_args()
 
@@ -195,13 +183,11 @@ def animate_particles(
     input_dir: str,
     pattern: str = "particles_step_*.csv",
     color_by: ColorMode = "vmag",
-    interval: int = 80,
-    fluid_size: float = 10.0,
+    interval: int = 20,
+    fluid_size: float = 14.0,
     boundary_size: float = 6.0,
-    stride: int = 1,
+    stride: int = 6,
     save: str | None = None,
-    vectors: bool = False,
-    vector_stride: int = 5,
 ) -> None:
     input_path = Path(input_dir)
     if not input_path.exists():
@@ -261,20 +247,6 @@ def animate_particles(
     ax.set_ylabel("y")
     title = ax.set_title(f"SPH animation | {files[0].name} | color={color_by}")
 
-    # Velocity vectors (fluid particles only, strided)
-    quiver_artist = None
-    if vectors:
-        v_stride = max(1, int(vector_stride))
-        idx = np.where(fluid_mask)[0][::v_stride]
-        qx = first["x"].astype(float)[idx]
-        qy = first["y"].astype(float)[idx]
-        qvx = first["vx"].astype(float)[idx]
-        qvy = first["vy"].astype(float)[idx]
-        vmag_q = np.sqrt(qvx * qvx + qvy * qvy)
-        scale_len = 0.05 * min(x_max - x_min, y_max - y_min)
-        scale = scale_len / (np.max(vmag_q) + 1e-12)
-        quiver_artist = ax.quiver(qx, qy, qvx * scale, qvy * scale, scale_units="xy", scale=1.0)
-
     def update(frame_idx: int):
         path = files[frame_idx]
         data = _load_csv_snapshot(path)
@@ -294,28 +266,16 @@ def animate_particles(
 
         boundary_scatter.set_offsets(boundary_offsets)
 
-        if quiver_artist is not None:
-            v_stride = max(1, int(vector_stride))
-            idx = np.where(fluid_mask_local)[0][::v_stride]
-            qx = x[idx]
-            qy = y[idx]
-            qvx = data["vx"].astype(float)[idx]
-            qvy = data["vy"].astype(float)[idx]
-            vmag_q = np.sqrt(qvx * qvx + qvy * qvy)
-            scale_len = 0.05 * min(x_max - x_min, y_max - y_min)
-            scale = scale_len / (np.max(vmag_q) + 1e-12)
-            quiver_artist.set_offsets(np.column_stack([qx, qy]))
-            quiver_artist.set_UVC(qvx * scale, qvy * scale)
-
         title.set_text(f"SPH animation | {path.name} | color={color_by}")
         return fluid_scatter, boundary_scatter, title
 
+    use_blit = save is None  # blit causes artifacts when saving to GIF
     anim = animation.FuncAnimation(
         fig,
         update,
         frames=len(files),
         interval=interval,
-        blit=False,
+        blit=use_blit,
         repeat=True,
     )
 
@@ -349,8 +309,6 @@ def main() -> int:
         boundary_size=args.boundary_size,
         stride=args.stride,
         save=args.save,
-        vectors=args.vectors,
-        vector_stride=args.vector_stride,
     )
     return 0
 

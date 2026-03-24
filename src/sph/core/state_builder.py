@@ -16,7 +16,6 @@ from sph.core.physics import compute_particle_mass
 from sph.geometry.stl import load_stl_mesh
 
 
-# region agent log
 def _agent_log(hypothesis_id: str, message: str, data: dict) -> None:
     """
     Lightweight debug logger for the AI agent.
@@ -34,15 +33,15 @@ def _agent_log(hypothesis_id: str, message: str, data: dict) -> None:
             "runId": "pre-fix",
             "hypothesisId": hypothesis_id,
         }
-        with open("/home/simon/projects/sph-framework/.cursor/debug.log", "a", encoding="utf-8") as f:
+        log_path = Path(".cursor/debug.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception:
-        # Logging must never interfere with the simulation or tests.
         pass
 
 
 _agent_log("H1", "module_imported", {})
-# endregion
 
 
 def _grid_points_2d(pmin: np.ndarray, pmax: np.ndarray, spacing: float) -> np.ndarray:
@@ -52,14 +51,35 @@ def _grid_points_2d(pmin: np.ndarray, pmax: np.ndarray, spacing: float) -> np.nd
     return np.stack([X.ravel(), Y.ravel()], axis=1)
 
 
-def _sample_box_boundary_2d(domain_min: np.ndarray, domain_max: np.ndarray, spacing: float, layers: int) -> np.ndarray:
+def _sample_box_boundary_2d(
+    domain_min: np.ndarray,
+    domain_max: np.ndarray,
+    spacing: float,
+    layers: int,
+    periodic_axes: tuple[bool, bool] | None = None,
+) -> np.ndarray:
     """
-    Sample boundary as static particles in multiple layers (recommended in Section 5.1.1
-    to avoid incomplete neighborhoods near boundaries).
-    """
-    pts = []
+    Sample box boundary particles for a 2D domain.
 
-    # We generate layers inward from the domain edges.
+    Important:
+    - periodic_axes[d] == True means this axis is periodic
+    - no solid wall particles are created on periodic faces
+
+    Example:
+    periodic_axes = (True, False)
+      -> no left/right walls
+      -> only bottom/top walls
+
+    This is the correct setup for a fully filled, streamwise-periodic pipe/channel.
+    """
+    if periodic_axes is None:
+        periodic_axes = (False, False)
+
+    periodic_x = bool(periodic_axes[0])
+    periodic_y = bool(periodic_axes[1])
+
+    pts: list[np.ndarray] = []
+
     for k in range(layers):
         off = k * spacing
 
@@ -68,15 +88,19 @@ def _sample_box_boundary_2d(domain_min: np.ndarray, domain_max: np.ndarray, spac
         y0 = domain_min[1] + off
         y1 = domain_max[1] - off
 
+        if x1 < x0 or y1 < y0:
+            continue
+
         xs = np.arange(x0, x1 + 1e-12, spacing, dtype=np.float64)
         ys = np.arange(y0, y1 + 1e-12, spacing, dtype=np.float64)
 
-        # bottom and top edges
-        pts.append(np.stack([xs, np.full_like(xs, y0)], axis=1))
-        pts.append(np.stack([xs, np.full_like(xs, y1)], axis=1))
+        # bottom / top walls only if y is NOT periodic
+        if not periodic_y:
+            pts.append(np.stack([xs, np.full_like(xs, y0)], axis=1))
+            pts.append(np.stack([xs, np.full_like(xs, y1)], axis=1))
 
-        # left and right edges (avoid double-count corners by skipping first/last)
-        if len(ys) > 2:
+        # left / right walls only if x is NOT periodic
+        if not periodic_x and len(ys) > 2:
             ys_inner = ys[1:-1]
             pts.append(np.stack([np.full_like(ys_inner, x0), ys_inner], axis=1))
             pts.append(np.stack([np.full_like(ys_inner, x1), ys_inner], axis=1))
@@ -86,12 +110,22 @@ def _sample_box_boundary_2d(domain_min: np.ndarray, domain_max: np.ndarray, spac
 
     all_pts = np.concatenate(pts, axis=0)
 
-    # Remove duplicates (important for corners / overlaps)
-    all_pts = np.unique(np.round(all_pts / spacing).astype(np.int64), axis=0).astype(np.float64) * spacing
+    # remove duplicates robustly on spacing grid
+    all_pts = np.unique(
+        np.round(all_pts / spacing).astype(np.int64),
+        axis=0,
+    ).astype(np.float64) * spacing
+
     return all_pts
 
 
-def _print_mesh_quality_warnings(mesh_name: str, triangle_count: int, dropped: int, diag: float, domain_diag: float | None) -> None:
+def _print_mesh_quality_warnings(
+    mesh_name: str,
+    triangle_count: int,
+    dropped: int,
+    diag: float,
+    domain_diag: float | None,
+) -> None:
     if triangle_count < 100:
         print(
             f"[GEOM][WARN] mesh={mesh_name} has only {triangle_count} triangles. "
@@ -109,31 +143,32 @@ def _print_mesh_quality_warnings(mesh_name: str, triangle_count: int, dropped: i
 
 
 def build_scene_state(scene: dict) -> ParticleState:
-    # region agent log
     _agent_log(
         "H1",
         "build_scene_state_called",
         {"keys": sorted(list(scene.keys()))},
     )
-    # endregion
 
     meta = scene["meta"]
     dim = int(meta["dimensions"])
     if dim != 2:
         raise ValueError("This boundary builder currently supports only 2D (dim=2).")
 
-    # --- scene parameters (dimension-aware)
-    dx = float(scene["fluid"]["spacing"])  # particle spacing = dx
+    dx = float(scene["fluid"]["spacing"])
     rho0 = float(scene["material"]["rho0"])
 
-    # support_radius = 2h (convention enforced in bootstrap); used for boundary layer extent
     support_radius = float(scene["neighbors"]["support_radius"])
     layers = int(scene.get("domain", {}).get("boundary_layers", int(np.ceil(support_radius / dx)) + 1))
 
     domain_min = np.array(scene["domain"]["min"], dtype=np.float64)
     domain_max = np.array(scene["domain"]["max"], dtype=np.float64)
 
-    # --- fluid block
+    periodic_axes_cfg = scene.get("domain", {}).get("periodic_axes", [False, False])
+    periodic_axes = (
+        bool(periodic_axes_cfg[0]) if len(periodic_axes_cfg) > 0 else False,
+        bool(periodic_axes_cfg[1]) if len(periodic_axes_cfg) > 1 else False,
+    )
+
     fluid = scene["fluid"]
     if fluid["type"] != "block":
         raise ValueError(f"unsupported fluid type: {fluid['type']}")
@@ -146,8 +181,15 @@ def build_scene_state(scene: dict) -> ParticleState:
     v0 = np.array(fluid.get("initial_velocity", [0.0, 0.0]), dtype=np.float64)
     fluid_vel = np.repeat(v0[None, :], fluid_pos.shape[0], axis=0)
 
-    # --- procedural boundary sampling (static)
-    boundary_pos = _sample_box_boundary_2d(domain_min, domain_max, dx, layers=layers)
+    # Procedural boundary sampling:
+    # For periodic axes we must NOT create wall particles on those faces.
+    boundary_pos = _sample_box_boundary_2d(
+        domain_min=domain_min,
+        domain_max=domain_max,
+        spacing=dx,
+        layers=layers,
+        periodic_axes=periodic_axes,
+    )
     boundary_vel = np.zeros((boundary_pos.shape[0], dim), dtype=np.float64)
     boundary_mass_val = compute_particle_mass(dx, rho0, dim)
     boundary_mass = np.full((boundary_pos.shape[0],), boundary_mass_val, dtype=np.float64)
@@ -155,7 +197,6 @@ def build_scene_state(scene: dict) -> ParticleState:
     boundary_p = np.zeros((boundary_pos.shape[0],), dtype=np.float64)
     boundary_is = np.ones((boundary_pos.shape[0],), dtype=np.bool_)
 
-    # --- optional CAD boundaries from geometry.meshes
     mesh_states: list[ParticleState] = []
     mesh_reports: list[dict] = []
     geometry_cfg = scene.get("geometry", {})
@@ -163,6 +204,7 @@ def build_scene_state(scene: dict) -> ParticleState:
     debug_geom = bool(scene.get("__debug_geom__", False))
     scene_dir = Path(str(scene.get("__scene_dir__", ".")))
     domain_diag = float(np.linalg.norm(domain_max - domain_min))
+
     for mesh_cfg in meshes:
         if str(mesh_cfg.get("type", "boundary")).lower() != "boundary":
             continue
@@ -170,11 +212,13 @@ def build_scene_state(scene: dict) -> ParticleState:
         mesh_file = mesh_cfg.get("path", mesh_cfg.get("file"))
         if not mesh_file:
             raise ValueError("geometry.meshes[].path (or file) is required for mesh boundary import")
+
         mesh_path = Path(str(mesh_file))
         if not mesh_path.is_absolute():
             mesh_path = scene_dir / mesh_path
         mesh_path = mesh_path.resolve()
         mesh_name = mesh_path.name
+
         print(f"[GEOM] loaded mesh {mesh_name}")
         mesh = load_stl_mesh(mesh_path)
         mesh = mesh.transformed(
@@ -184,6 +228,7 @@ def build_scene_state(scene: dict) -> ParticleState:
             units_hint=mesh_cfg.get("units_hint", None),
         )
         print(f"[GEOM] triangles={mesh.triangle_count}")
+
         _print_mesh_quality_warnings(
             mesh_name=mesh_name,
             triangle_count=mesh.triangle_count,
@@ -191,6 +236,7 @@ def build_scene_state(scene: dict) -> ParticleState:
             diag=mesh.characteristic_length,
             domain_diag=domain_diag,
         )
+
         if mesh.normal_consistency_ratio is not None and mesh.normal_consistency_ratio < 0.7:
             print(
                 f"[GEOM][WARN] mesh={mesh_name} normal consistency is low: "
@@ -209,13 +255,16 @@ def build_scene_state(scene: dict) -> ParticleState:
             layer_spacing=boundary_spacing,
             direction=layer_mode,
         )
+
         overlap_mode = str(mesh_cfg.get("overlap_resolution", "warn")).lower()
         overlap_threshold = float(mesh_cfg.get("overlap_threshold", 0.5 * dx))
+
         overlap_before = compute_fluid_boundary_distance_stats(
             fluid_positions=fluid_pos,
             boundary_positions=pts3[:, :dim],
             threshold=overlap_threshold,
         )
+
         if overlap_mode == "push_outward" and overlap_before.close_fraction > 0.05:
             push_dist = float(mesh_cfg.get("overlap_push_distance", overlap_threshold))
             pts3 = pts3 + push_dist * nrm3
@@ -236,9 +285,20 @@ def build_scene_state(scene: dict) -> ParticleState:
         brho = np.full((bpos.shape[0],), rho0, dtype=np.float64)
         bp = np.zeros((bpos.shape[0],), dtype=np.float64)
         bis = np.ones((bpos.shape[0],), dtype=np.bool_)
-        mesh_state = ParticleState(dim=dim, pos=bpos, vel=bvel, acc=np.zeros_like(bvel), mass=bmass, rho=brho, p=bp, is_boundary=bis)
+
+        mesh_state = ParticleState(
+            dim=dim,
+            pos=bpos,
+            vel=bvel,
+            acc=np.zeros_like(bvel),
+            mass=bmass,
+            rho=brho,
+            p=bp,
+            is_boundary=bis,
+        )
         mesh_state.validate()
         print(f"[GEOM] boundary particles created={mesh_state.n}")
+
         mesh_reports.append(
             {
                 "name": mesh_name,
@@ -258,14 +318,26 @@ def build_scene_state(scene: dict) -> ParticleState:
         )
         mesh_states.append(mesh_state)
 
-    # --- combine fluid + all boundaries
     pos_parts = [fluid_pos, boundary_pos]
     vel_parts = [fluid_vel, boundary_vel]
+
     fmass_val = compute_particle_mass(dx, rho0, dim)
-    mass_parts = [np.full((fluid_pos.shape[0],), fmass_val, dtype=np.float64), boundary_mass]
-    rho_parts = [np.full((fluid_pos.shape[0],), rho0, dtype=np.float64), boundary_rho]
-    p_parts = [np.zeros((fluid_pos.shape[0],), dtype=np.float64), boundary_p]
-    is_parts = [np.zeros((fluid_pos.shape[0],), dtype=np.bool_), boundary_is]
+    mass_parts = [
+        np.full((fluid_pos.shape[0],), fmass_val, dtype=np.float64),
+        boundary_mass,
+    ]
+    rho_parts = [
+        np.full((fluid_pos.shape[0],), rho0, dtype=np.float64),
+        boundary_rho,
+    ]
+    p_parts = [
+        np.zeros((fluid_pos.shape[0],), dtype=np.float64),
+        boundary_p,
+    ]
+    is_parts = [
+        np.zeros((fluid_pos.shape[0],), dtype=np.bool_),
+        boundary_is,
+    ]
 
     for mesh_state in mesh_states:
         pos_parts.append(mesh_state.pos)
@@ -283,16 +355,32 @@ def build_scene_state(scene: dict) -> ParticleState:
     p = np.concatenate(p_parts, axis=0)
     is_boundary = np.concatenate(is_parts, axis=0)
 
-    state = ParticleState(dim=dim, pos=pos, vel=vel, acc=acc, mass=mass, rho=rho, p=p, is_boundary=is_boundary)
+    state = ParticleState(
+        dim=dim,
+        pos=pos,
+        vel=vel,
+        acc=acc,
+        mass=mass,
+        rho=rho,
+        p=p,
+        is_boundary=is_boundary,
+    )
     state.validate()
 
-    # Overlap diagnostic between fluid and boundary particles at startup.
     overlap_threshold = 0.5 * dx
-    overlap_stats = compute_fluid_boundary_distance_stats(
-        fluid_positions=state.pos[state.fluid_indices],
-        boundary_positions=state.pos[state.boundary_indices],
-        threshold=overlap_threshold,
-    )
+    if state.boundary_indices.size > 0:
+        overlap_stats = compute_fluid_boundary_distance_stats(
+            fluid_positions=state.pos[state.fluid_indices],
+            boundary_positions=state.pos[state.boundary_indices],
+            threshold=overlap_threshold,
+        )
+    else:
+        overlap_stats = compute_fluid_boundary_distance_stats(
+            fluid_positions=state.pos[state.fluid_indices],
+            boundary_positions=np.zeros((0, dim), dtype=np.float64),
+            threshold=overlap_threshold,
+        )
+
     if overlap_stats.close_fraction > 0.05:
         print(
             f"[GEOM][WARN] fluid-boundary overlap risk: min_dist={overlap_stats.min_distance:.6e} "
@@ -316,19 +404,13 @@ def build_scene_state(scene: dict) -> ParticleState:
             "fluid_count": overlap_stats.fluid_count,
         },
     }
+
     return state
 
 
 def build_fluid_block(scene: dict) -> ParticleState:
     """
     Legacy fluid-only block builder used by existing tests.
-
-    This function is a direct structural adaptation of the original
-    implementation (see previous git history) to the new ParticleState
-    layout that includes an is_boundary flag. We set all particles to
-    non-boundary, so the physical configuration (positions, masses,
-    densities, pressures) remains identical; only the container gains
-    an explicit boundary flag.
     """
     meta = scene["meta"]
     dim = int(meta["dimensions"])
@@ -349,10 +431,8 @@ def build_fluid_block(scene: dict) -> ParticleState:
     if spacing <= 0:
         raise ValueError("spacing must be > 0")
 
-    # generate regular grid points in [pmin, pmax] (inclusive-ish)
     axes = []
     for d in range(dim):
-        # +1e-12 to avoid floating issues at the boundary
         axes.append(np.arange(pmin[d], pmax[d] + 1e-12, spacing, dtype=np.float64))
 
     if dim == 2:
@@ -369,17 +449,12 @@ def build_fluid_block(scene: dict) -> ParticleState:
     vel = np.repeat(v0[None, :], n, axis=0)
     acc = np.zeros((n, dim), dtype=np.float64)
 
-    # Mass: rho0 * spacing^dim, as in the original implementation.
-    # This preserves the same volumetric mass distribution and therefore
-    # keeps density-related physics identical.
     rho0 = float(scene["material"]["rho0"])
     mass_value = compute_particle_mass(spacing, rho0, dim)
     mass = np.full((n,), mass_value, dtype=np.float64)
 
     rho = np.full((n,), rho0, dtype=np.float64)
     p = np.zeros((n,), dtype=np.float64)
-
-    # All particles are fluid; boundary flag is False everywhere.
     is_boundary = np.zeros((n,), dtype=np.bool_)
 
     state = ParticleState(

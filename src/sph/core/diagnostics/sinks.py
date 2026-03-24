@@ -85,11 +85,11 @@ class DebugSnapshotSink:
         fluid_ids = state.fluid_indices
         with out_path.open("w", encoding="utf-8") as f:
             f.write("x,y,vx,vy,rho,p,neighbor_count\n")
-            for k, i in enumerate(fluid_ids):
+            for i in fluid_ids:
                 f.write(
                     f"{state.pos[i,0]:.9e},{state.pos[i,1]:.9e},"
                     f"{state.vel[i,0]:.9e},{state.vel[i,1]:.9e},"
-                    f"{state.rho[i]:.9e},{state.p[i]:.9e},{int(neigh_counts[k])}\n"
+                    f"{state.rho[i]:.9e},{state.p[i]:.9e},{int(neigh_counts[i])}\n"
                 )
         return out_path
 

@@ -105,8 +105,15 @@ def _print_verify_table(report: dict) -> None:
         print(f"[VERIFY] {name:<30} {_fmt(value):<14} {_fmt(gmin):<14} {_fmt(gmax):<14} {'PASS' if p else 'FAIL'}")
 
 
-def _print_geom_step0_report(state, support_radius: float, spacing: float, *, debug_geom: bool) -> None:
-    ns0 = SpatialHash(support_radius=float(support_radius), dim=state.dim)
+def _print_geom_step0_report(state, support_radius: float, spacing: float, *, debug_geom: bool, scene: dict) -> None:
+    periodic_axes_raw = scene.get("domain", {}).get("periodic_axes", [False, False])
+    ns0 = SpatialHash(
+        support_radius=float(support_radius),
+        dim=state.dim,
+        domain_min=np.array(scene.get("domain", {}).get("min", [0.0, 0.0]), dtype=np.float64),
+        domain_max=np.array(scene.get("domain", {}).get("max", [1.0, 1.0]), dtype=np.float64),
+        periodic_axes=tuple(bool(periodic_axes_raw[d]) for d in range(state.dim)),
+    )
     ns0.build(state.pos)
     fluid_ids = state.fluid_indices
     bound_ids = state.boundary_indices
@@ -281,11 +288,23 @@ def main() -> int:
     enable_viscosity = bool(visc_cfg.get("enable", False))
     kinematic_viscosity = float(visc_cfg.get("nu", 0.0))
 
+    periodic_axes_cfg = domain_cfg.get("periodic_axes", None)
+    periodic_axes = None
+    if periodic_axes_cfg is not None:
+        periodic_axes = tuple(bool(v) for v in periodic_axes_cfg[:dim])
+
+    eos_cfg = scene.get("material", {}).get("eos", {})
+    eos_type = str(eos_cfg.get("type", "linear")).lower()
+    eos_gamma = float(eos_cfg.get("gamma", 7.0))
+    xsph_cfg = solver_cfg.get("xsph", {})
+    enable_xsph = bool(xsph_cfg.get("enable", True)) if isinstance(xsph_cfg, dict) else True
+    xsph_epsilon = float(xsph_cfg.get("epsilon", 0.05)) if isinstance(xsph_cfg, dict) else 0.05
+
     cfg = SimConfig(
         support_radius=support_radius,
         smoothing_length=h,
         rho0=rho0,
-        eos_k=float(scene.get("material", {}).get("eos", {}).get("k", 500.0)),
+        eos_k=float(eos_cfg.get("k", 500.0)),
         g=g,
         cfl_lambda=float(time_cfg.get("cfl", 0.4)),
         dt_min=float(time_cfg.get("dt_min", 1e-5)),
@@ -293,13 +312,16 @@ def main() -> int:
         dt_fixed=float(time_cfg.get("dt_fixed", 5e-4)),
         use_cfl=bool(use_cfl),
         eos_c0=(
-            float(scene.get("material", {}).get("eos", {}).get("c0"))
-            if scene.get("material", {}).get("eos", {}).get("c0", None) is not None
+            float(eos_cfg.get("c0"))
+            if eos_cfg.get("c0", None) is not None
             else None
         ),
+        eos_type=eos_type,
+        eos_gamma=eos_gamma,
+        enable_xsph=enable_xsph,
+        xsph_epsilon=xsph_epsilon,
         enable_viscosity=enable_viscosity,
         kinematic_viscosity=kinematic_viscosity,
-        # domain collision
         domain_min=domain_min,
         domain_max=domain_max,
         boundary_restitution=float(boundary_cfg.get("restitution", domain_cfg.get("restitution", 0.0))),
@@ -320,6 +342,7 @@ def main() -> int:
             if boundary_cfg.get("force_accel_clamp", None) is not None
             else None
         ),
+        periodic_axes=periodic_axes,
     )
 
     # Startup numerical safety checks before stepping.
@@ -437,7 +460,7 @@ def main() -> int:
         export_particles_csv(csv_dir / "particles_step_0000.csv", state)
     export_manager.maybe_export_initial(state)
     if args.debug_geom or scene.get("geometry", {}).get("meshes"):
-        _print_geom_step0_report(state, support_radius=support_radius, spacing=spacing, debug_geom=bool(args.debug_geom))
+        _print_geom_step0_report(state, support_radius=support_radius, spacing=spacing, debug_geom=bool(args.debug_geom), scene=scene)
 
     controller = TimeStepController(
         use_cfl=bool(cfg.use_cfl),
@@ -493,7 +516,13 @@ def main() -> int:
         )
 
         # Diagnostics neighbor search on current positions (read-only)
-        ns = SpatialHash(support_radius=support_radius, dim=dim)
+        ns = SpatialHash(
+            support_radius=support_radius,
+            dim=dim,
+            domain_min=cfg.domain_min,
+            domain_max=cfg.domain_max,
+            periodic_axes=cfg.periodic_axes,
+        )
         ns.build(state.pos)
         sim_time += float(dt)
         metrics, neigh_counts = build_step_metrics(

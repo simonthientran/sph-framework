@@ -26,6 +26,11 @@ class StartupSanityReport:
     rho_rel_err_min: float
     rho_rel_err_mean: float
     rho_rel_err_max: float
+    # Interior-only stats (particles away from fluid block boundary / free surface)
+    rho_rel_err_interior_mean: float
+    interior_count: int
+    # When density_error_interior_only: effective = interior_mean, else all-fluid mean
+    effective_rho_rel_err_mean: float
     overlap_close_fraction: float
     overlap_min_dist: float
     outside_domain_count: int
@@ -67,6 +72,7 @@ def evaluate_startup_sanity(
     sample_size = int(startup_cfg.get("dx_sample_size", 128))
     density_warn_rel = float(startup_cfg.get("density_error_warn_rel", 0.05))
     density_abort_rel = float(startup_cfg.get("density_error_abort_rel", 0.20))
+    density_error_interior_only = bool(startup_cfg.get("density_error_interior_only", False))
     auto_tune = bool(startup_cfg.get("auto_tune_support_radius", True))
     target_h_over_dx = float(startup_cfg.get("support_radius_target_h_over_dx_2d", 1.3))
     abort_on_units_mismatch = bool(startup_cfg.get("abort_on_units_mismatch", True))
@@ -99,7 +105,15 @@ def evaluate_startup_sanity(
         expected_neighbors_2d = float("nan")
 
     # Keep density reconstruction aligned with current solver neighborhood behavior.
-    ns = SpatialHash(support_radius=support_radius, dim=state.dim)
+    _domain_cfg = scene.get("domain", {})
+    _periodic_raw = _domain_cfg.get("periodic_axes", [False] * state.dim)
+    ns = SpatialHash(
+        support_radius=support_radius,
+        dim=state.dim,
+        domain_min=np.array(_domain_cfg["min"], dtype=np.float64) if "min" in _domain_cfg else None,
+        domain_max=np.array(_domain_cfg["max"], dtype=np.float64) if "max" in _domain_cfg else None,
+        periodic_axes=tuple(bool(_periodic_raw[d]) for d in range(state.dim)),
+    )
     ns.build(state.pos)
     rho_init = compute_density_with_boundaries_eq83(state=state, neighbor_search=ns, h=h, rho0=rho0)
     if fluid_ids.size:
@@ -111,11 +125,32 @@ def evaluate_startup_sanity(
         rho_rel_err_min = float(np.min(rel))
         rho_rel_err_mean = float(np.mean(rel))
         rho_rel_err_max = float(np.max(rel))
+
+        # Interior-only: particles away from fluid block boundary (full neighborhood)
+        fluid_cfg = scene.get("fluid", {})
+        interior_count = 0
+        rho_rel_err_interior_mean = 0.0
+        if "min" in fluid_cfg and "max" in fluid_cfg:
+            fmin = np.asarray(fluid_cfg["min"], dtype=np.float64)
+            fmax = np.asarray(fluid_cfg["max"], dtype=np.float64)
+            margin = support_radius
+            interior_mask = np.all(
+                (fluid_pos >= fmin[None, :] + margin) & (fluid_pos <= fmax[None, :] - margin),
+                axis=1,
+            )
+            interior_count = int(np.count_nonzero(interior_mask))
+            if interior_count > 0:
+                rel_interior = rel[interior_mask]
+                rho_rel_err_interior_mean = float(np.mean(rel_interior))
+            else:
+                rho_rel_err_interior_mean = rho_rel_err_mean
     else:
         rho_min = rho_avg = rho_max = float(rho0)
         rho_rel_err_min = 0.0
         rho_rel_err_mean = 0.0
         rho_rel_err_max = 0.0
+        rho_rel_err_interior_mean = 0.0
+        interior_count = 0
 
     overlap = compute_fluid_boundary_distance_stats(
         fluid_positions=fluid_pos,
@@ -176,7 +211,8 @@ def evaluate_startup_sanity(
         recommendations.append(
             f"support_radius={h:.6e} is smaller than kernel support requirement 2h={required_support_radius:.6e}."
         )
-    if rho_rel_err_mean > density_warn_rel:
+    effective_rho_err = rho_rel_err_interior_mean if density_error_interior_only and interior_count > 0 else rho_rel_err_mean
+    if effective_rho_err > density_warn_rel:
         recommendations.append("Initial density error is high; check units/scale, overlap, h/dx, and boundary resolution.")
     if units_mismatch_detected:
         recommendations.append("Geometry/domain scale mismatch detected; verify units_hint and mesh transform scale.")
@@ -193,7 +229,7 @@ def evaluate_startup_sanity(
     if units_mismatch_detected and abort_on_units_mismatch:
         should_abort = True
         abort_reason = "units_mismatch"
-    elif rho_rel_err_mean > density_abort_rel:
+    elif effective_rho_err > density_abort_rel:
         should_abort = True
         abort_reason = "high_initial_density_error"
 
@@ -212,6 +248,9 @@ def evaluate_startup_sanity(
         rho_rel_err_min=rho_rel_err_min,
         rho_rel_err_mean=rho_rel_err_mean,
         rho_rel_err_max=rho_rel_err_max,
+        rho_rel_err_interior_mean=rho_rel_err_interior_mean,
+        interior_count=interior_count,
+        effective_rho_rel_err_mean=effective_rho_err,
         overlap_close_fraction=float(overlap.close_fraction),
         overlap_min_dist=float(overlap.min_distance),
         outside_domain_count=outside_count,
@@ -236,14 +275,16 @@ def format_startup_density_block(
     lines = [
         "[STARTUP][DENSITY]",
         f"  rho(min/avg/max) = {report.rho_min:.2f}/{report.rho_avg:.2f}/{report.rho_max:.2f}",
-        f"  rho_rel_error_avg = {report.rho_rel_err_mean:.2%}",
+        f"  rho_rel_error_avg = {report.effective_rho_rel_err_mean:.2%}",
         f"  dx={report.dx_nominal:.6e} h={report.h:.6e} h/dx={report.h / max(report.dx_nominal, 1e-12):.4f} "
         f"particle_mass={particle_mass:.6e} kernel_constant={kernel_constant:.6e}",
     ]
-    if report.rho_rel_err_mean > 0.05:
-        lines.append(f"  [WARN] avg density error {report.rho_rel_err_mean:.2%} > 5%")
-    if report.rho_rel_err_mean > 0.20:
-        lines.append(f"  [ABORT] avg density error {report.rho_rel_err_mean:.2%} > 20%")
+    if report.interior_count > 0:
+        lines.append(f"  (interior: n={report.interior_count} err_avg={report.rho_rel_err_interior_mean:.2%})")
+    if report.effective_rho_rel_err_mean > 0.05:
+        lines.append(f"  [WARN] avg density error {report.effective_rho_rel_err_mean:.2%} > 5%")
+    if report.effective_rho_rel_err_mean > 0.20:
+        lines.append(f"  [ABORT] avg density error {report.effective_rho_rel_err_mean:.2%} > 20%")
     return "\n".join(lines)
 
 
@@ -259,7 +300,7 @@ def format_startup_sanity_block(report: StartupSanityReport) -> str:
             f"| expected_neighbors_2d~{report.expected_neighbors_2d:.2f}"
         ),
         (
-            f"  rho_init rel_err min/avg/max = {report.rho_rel_err_min:.2%}/{report.rho_rel_err_mean:.2%}/{report.rho_rel_err_max:.2%}"
+            f"  rho_init rel_err min/avg/max = {report.rho_rel_err_min:.2%}/{report.effective_rho_rel_err_mean:.2%}/{report.rho_rel_err_max:.2%}"
         ),
         (
             f"  overlap close_fraction={report.overlap_close_fraction:.2%} "
