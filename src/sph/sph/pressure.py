@@ -16,50 +16,11 @@ def pressure_state_equation_linear(rho: np.ndarray, rho0: float, k: float) -> np
     - Document: "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
     - Section: 4.4 "State Equation SPH (SESPH)" lists examples including:
         p_i = k(rho_i - rho0)
+      (Note: shown as an example, not a numbered equation.)
     """
     rho0 = float(rho0)
     k = float(k)
     return k * (rho - rho0)
-
-
-def pressure_tait_eos(
-    rho: np.ndarray, rho0: float, B: float, gamma: float = 7.0,
-) -> np.ndarray:
-    """
-    Tait equation of state (Becker & Teschner 2007):
-        p_i = B * ((rho_i / rho0)^gamma - 1)
-
-    Standard for WCSPH. gamma=7 for water-like fluids.
-    B = rho0 * c0^2 / gamma controls compressibility.
-
-    Density is clamped to rho0 from below to prevent negative pressures
-    that cause tensile instability.
-    """
-    rho0 = float(rho0)
-    B = float(B)
-    gamma = float(gamma)
-    rho_clamped = np.maximum(rho, rho0)
-    return B * ((rho_clamped / rho0) ** gamma - 1.0)
-
-
-def compute_tait_B(rho0: float, c0: float, gamma: float = 7.0) -> float:
-    """Tait stiffness B = rho0 * c0^2 / gamma."""
-    return float(rho0) * float(c0) ** 2 / float(gamma)
-
-
-def compute_eos_sound_speed(
-    eos_k: float, rho0: float, eos_type: str = "linear", gamma: float = 7.0,
-) -> float:
-    """
-    Effective numerical sound speed for CFL computation.
-    Linear: c0 = sqrt(k / rho0)
-    Tait:   c0 = sqrt(gamma * B / rho0)
-    """
-    rho0 = float(max(rho0, 1e-12))
-    k = float(max(eos_k, 0.0))
-    if eos_type == "tait":
-        return float(np.sqrt(float(gamma) * k / rho0))
-    return float(np.sqrt(k / rho0))
 
 
 def pressure_acceleration_symmetric(
@@ -74,16 +35,12 @@ def pressure_acceleration_symmetric(
     Reference:
     - Document: "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
     - Equation: Eq. (53) (pressure acceleration in the PCISPH derivation).
-
-    Important implementation detail:
-    - For periodic axes, the kernel gradient must use the minimum-image
-      relative vector from SpatialHash.relative_vector(...).
     """
     n = state.n
     dim = state.dim
 
     a_p = np.zeros((n, dim), dtype=np.float64)
-    eps = 1e-12
+    eps = 1e-12  # numerical guard for rho^2 in case rho is accidentally ~0
 
     for i in range(n):
         pi = state.p[i]
@@ -91,15 +48,13 @@ def pressure_acceleration_symmetric(
         rhoi2 = rhoi * rhoi + eps
 
         acc = np.zeros((dim,), dtype=np.float64)
-        xi = state.pos[i]
 
         for j in neighbor_search.query(i, state.pos):
             pj = state.p[j]
             rhoj = state.rho[j]
             rhoj2 = rhoj * rhoj + eps
 
-            rij = neighbor_search.relative_vector(xi, state.pos[j])
-            gradW = cubic_spline_gradW(rij, h=h, dim=dim)
+            gradW = cubic_spline_gradW(state.pos[i] - state.pos[j], h=h, dim=dim)
 
             acc -= state.mass[j] * (pi / rhoi2 + pj / rhoj2) * gradW
 
@@ -113,7 +68,9 @@ def pressure_state_equation_linear_section44(rho: np.ndarray, rho0: float, k: fl
     Section 4.4 linear state equation wrapper:
         p_i = k (rho_i - rho0)
 
-    This is numerically identical to pressure_state_equation_linear.
+    This is numerically identical to pressure_state_equation_linear; it is
+    provided only to mirror the tutorial's Section 4.4 naming without
+    changing the underlying physics.
     """
     return pressure_state_equation_linear(rho=rho, rho0=rho0, k=k)
 
@@ -125,20 +82,16 @@ def pressure_acceleration_with_boundaries_eq84(
     rho0: float,
 ) -> np.ndarray:
     """
-    Pressure acceleration including boundary particles.
+    Pressure acceleration including boundary particles (particle-based boundary handling).
 
     Reference:
     - Document: "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
-    - Equation: Eq. (84)
-    - Boundary assumptions:
-        rho_boundary = rho0
-        p_boundary = p_i
+    - Equation: Eq. (84) (pressure force with fluid neighbors and boundary neighbors)
+    - Boundary assumptions described in Section 5.1.1:
+        rho_boundary = rho0, p_boundary = p_i (pressure mirroring)
 
-    Important implementation detail:
-    - For periodic axes, the kernel gradient must use the minimum-image
-      relative vector from SpatialHash.relative_vector(...).
-
-    Only fluid particles receive pressure acceleration.
+    We compute acceleration a_i = F_i / m_i.
+    Only fluid particles receive pressure acceleration; boundary particles remain static.
     """
     n = state.n
     dim = state.dim
@@ -153,13 +106,12 @@ def pressure_acceleration_with_boundaries_eq84(
         rhoi2 = rhoi * rhoi + eps
 
         acc = np.zeros((dim,), dtype=np.float64)
-        xi = state.pos[i]
 
         for j in neighbor_search.query(i, state.pos):
-            rij = neighbor_search.relative_vector(xi, state.pos[j])
-            gradW = cubic_spline_gradW(rij, h=h, dim=dim)
+            gradW = cubic_spline_gradW(state.pos[i] - state.pos[j], h=h, dim=dim)
 
             if state.is_boundary[j]:
+                # boundary neighbor: rho_j = rho0, p_j = p_i (mirroring)
                 rhoj2 = float(rho0) * float(rho0) + eps
                 pj = pi
             else:
@@ -172,3 +124,5 @@ def pressure_acceleration_with_boundaries_eq84(
         a[i] = acc
 
     return a
+
+

@@ -3,80 +3,88 @@ from __future__ import annotations
 import numpy as np
 
 
-def kernel_constant(dim: int, h: float) -> float:
+def cubic_spline_W(r: np.ndarray, h: float, dim: int) -> float:
     """
-    Cubic spline kernel normalization constant sigma for W(r,h) = sigma * f(q).
+    Cubic spline smoothing kernel W(r,h) with compact support q in [0, 1].
 
-    Convention (Monaghan cubic spline, support radius = 2h):
-      2D: W(r,h) = (10 / (7*pi*h^2)) * f(q)   -> sigma = 10/(7*pi*h^2)
-      3D: W(r,h) = (1 / (pi*h^3)) * f(q)      -> sigma = 1/(pi*h^3)
+    Reference:
+    - Document: "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
+    - Equation: Eq. (4) (cubic spline kernel definition).
 
-    Neighbor search must use support_radius = 2h.
+    Parameterization used here:
+        q = ||r|| / h
+        W(r,h) = sigma_d * piecewise(q)
+    with normalization constants:
+        sigma1 = 4/(3h), sigma2 = 40/(7*pi*h^2), sigma3 = 8/(pi*h^3)
     """
     h = float(h)
     if h <= 0.0:
         raise ValueError("h must be > 0")
+
     if dim == 1:
-        return 2.0 / (3.0 * h)
-    if dim == 2:
-        return 10.0 / (7.0 * np.pi * h * h)
-    if dim == 3:
-        return 1.0 / (np.pi * h**3)
-    raise ValueError(f"dim must be 1, 2 or 3, got {dim}")
+        sigma = 4.0 / (3.0 * h)
+    elif dim == 2:
+        sigma = 40.0 / (7.0 * np.pi * h * h)
+    elif dim == 3:
+        sigma = 8.0 / (np.pi * h ** 3)
+    else:
+        raise ValueError("dim must be 1, 2 or 3")
 
-
-def cubic_spline_W(r: np.ndarray, h: float, dim: int) -> float:
-    """
-    Cubic spline smoothing kernel W(r,h) with support radius 2h.
-    
-    Parameters:
-        r: vector to neighbor (pos_i - pos_j)
-        h: smoothing length (support radius = 2h)
-        dim: dimension (1, 2, or 3)
-        
-    Normalization constants (Monaghan cubic spline):
-        1D: 2/(3h)
-        2D: 10/(7*pi*h^2)
-        3D: 1/(pi*h^3)
-    """
-    sigma = kernel_constant(dim, h)
     q = float(np.linalg.norm(r) / h)
 
+    if q <= 0.5:
+        # 6(q^3 - q^2) + 1
+        return sigma * (6.0 * (q ** 3 - q ** 2) + 1.0)
     if q <= 1.0:
-        # 1 - (3/2)q^2 + (3/4)q^3
-        return sigma * (1.0 - 1.5 * q * q + 0.75 * q ** 3)
-    elif q <= 2.0:
-        # (1/4)(2-q)^3
-        return sigma * 0.25 * (2.0 - q) ** 3
-    
+        # 2(1 - q)^3
+        return sigma * (2.0 * (1.0 - q) ** 3)
     return 0.0
 
 
 def cubic_spline_gradW(r: np.ndarray, h: float, dim: int) -> np.ndarray:
     """
     Gradient of the cubic spline kernel ∇W(r,h).
-    
-    q = r/h
-    ∇W = (dW/dq) * (1/h) * (r/|r|)
+
+    Reference:
+    - Document: "SPH Techniques for the Physics Based Simulation of Fluids and Solids - SPH_Tutorial.pdf"
+    - Kernel definition: Eq. (4). The derivative is taken analytically from the same piecewise polynomial.
+
+    We apply the chain rule:
+        q = ||r|| / h
+        ∇W = (dW/dq) * (1/h) * r/||r||     for r != 0
     """
-    sigma = kernel_constant(dim, h)
+    h = float(h)
+    if h <= 0.0:
+        raise ValueError("h must be > 0")
+
+    if dim == 1:
+        sigma = 4.0 / (3.0 * h)
+    elif dim == 2:
+        sigma = 40.0 / (7.0 * np.pi * h * h)
+    elif dim == 3:
+        sigma = 8.0 / (np.pi * h ** 3)
+    else:
+        raise ValueError("dim must be 1, 2 or 3")
+
     r = np.asarray(r, dtype=np.float64)
     rn = float(np.linalg.norm(r))
 
+    # At r = 0 the direction is undefined; for symmetric kernels we set gradient to zero.
     if rn == 0.0:
         return np.zeros((dim,), dtype=np.float64)
 
     q = rn / h
 
-    if q > 2.0:
+    # Compact support: outside q>1 => gradient is zero
+    if q > 1.0:
         return np.zeros((dim,), dtype=np.float64)
 
-    # dW/dq
-    if q <= 1.0:
-        # d/dq (1 - 1.5q^2 + 0.75q^3) = -3q + 2.25q^2
-        dW_dq = sigma * (-3.0 * q + 2.25 * q * q)
+    # Eq. (4) piecewise polynomial derivatives w.r.t q:
+    # for q <= 0.5: 6(q^3 - q^2) + 1  -> d/dq = 18 q^2 - 12 q
+    # for 0.5 < q <= 1: 2(1 - q)^3    -> d/dq = -6(1 - q)^2
+    if q <= 0.5:
+        dW_dq = sigma * (18.0 * q * q - 12.0 * q)
     else:
-        # d/dq (0.25(2-q)^3) = 0.75(2-q)^2 * (-1)
-        dW_dq = sigma * (-0.75 * (2.0 - q) ** 2)
+        dW_dq = sigma * (-6.0 * (1.0 - q) ** 2)
 
     return (dW_dq / h) * (r / rn)

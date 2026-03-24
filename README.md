@@ -1,81 +1,288 @@
-# SPH Framework
+# SPH Framework — Particle-Based CFD for Internal Flow
 
-Modular Smoothed Particle Hydrodynamics (SPH) framework in Python.
+## Overview
 
-## Goals
-- Clean architecture (solver/forces/neighbors swapbar)
-- Deterministic runs (reproducible simulations)
-- Scene system (JSON)
-- Export (CSV + VTK)
-- Performance-ready design (NumPy first, Numba later)
+This repository implements a modular Smoothed Particle Hydrodynamics (SPH) framework with a focus on:
 
-## Repo Structure
-- `src/sph/` core framework
-- `scenes/` simulation scenes (JSON)
-- `docs/` architecture + ADR decisions
-- `tests/` unit/regression tests
-# sph-framework
+- **Single-phase internal flow (pipe/channel flow)**
+- **Physics-based validation (Poiseuille flow)**
+- **Extensibility towards modern incompressible SPH solvers (IISPH, DFSPH)**
+- **Clean software architecture for research and HPC extensions**
 
-## Pipe-flow vx-profile validation
-- Run simulation:
-  - `python -m sph.core.bootstrap scenes/examples/pipe_flow_1phase_2d.json`
-- Output profile CSV (with metadata header): `out/pipe_flow_2d/vx_profile_bins.csv`
-- Generate validation plot:
-  - `python tools/plot_vx_profile.py --input out/pipe_flow_2d/vx_profile_bins.csv --output out/pipe_flow_2d/vx_profile.png`
+The long-term goal is to evolve this project towards a **research-grade SPH simulation framework comparable in structure (not scale) to SPlisHSPlasH**, with emphasis on:
 
-## STL/CAD boundary import
-- Scene schema supports:
-  - `geometry.meshes[].path` (or `file`)
-  - transform: `scale`, `translate`, `rotate_euler_deg`
-  - units: `units_hint` (`"m"`, `"mm"`, `"cm"`)
-  - boundary generation: `boundary_spacing`, `layers`, `layer_mode`
-- Run with geometry diagnostics:
-  - `python -m sph.core.bootstrap scenes/examples/pipe_from_stl.json --debug-geom`
+- correctness
+- reproducibility
+- extensibility
+- performance
 
-## Solver verification mode (CI gate)
-- Run deterministic verification with pass/fail exit code:
-  - `python -m sph.core.bootstrap scenes/verification/hydrostatic_2d_wcsph.json --verify`
-  - `python -m sph.core.bootstrap scenes/verification/poiseuille_2d_wcsph.json --verify`
-- Reports are written to `out/verification/*.json`.
+---
 
-## Diagnostics and adaptive timestep controls
-- Scene config supports optional diagnostics exports:
-  - `export.diagnostics.enable` (step-metrics CSV)
-  - `export.diagnostics.path` (default `out/diagnostics/step_metrics.csv`)
-  - `export.diagnostics.debug_snapshots` (enable instability-triggered particle CSV dumps)
-  - `export.diagnostics.debug_dir` (default `out/debug`)
-- Startup/runtime controls in `startup_safety`:
-  - `dt_ramp_up_max` (default `1.2`)
-  - `neighbor_histogram_every` (default `time.log_every`)
-  - `instability_rho_min_frac`, `instability_rho_max_frac`, `instability_neigh_min`, `instability_vmax`
+## Project Goals
 
-## Open VTK in ParaView
-- Enable scene export:
-  - `export.vtk.enable: true`
-  - `export.vtk.every: <N>`
-  - `export.vtk.dir: out/vtk`
-- Run scene bootstrap; files are written as `particles_000000.vtk`, `particles_000200.vtk`, etc.
-- In ParaView: `File -> Open` a `.vtk` file in `out/vtk`, then `Apply`.
-- Useful point arrays:
-  - `velocity` (vector)
-  - `rho` (scalar)
-  - `p` (scalar)
-  - `neighbor_count` (scalar, if diagnostics are available for that step)
+### Short-Term Goals
+- Stable 2D single-phase internal flow simulation
+- Fully filled channel / pipe flow
+- Reproducible benchmark case
+- Validation against analytical Poiseuille profile
 
-## PCISPH stability parameters (control logic)
-These knobs do **not** change the PCISPH equations; they only change control logic around them:
+### Mid-Term Goals
+- Implement incompressible solvers:
+  - PCISPH
+  - IISPH
+  - DFSPH (primary target)
+- Improve boundary handling
+- Improve numerical stability
 
-- **Active-set**
-  - `min_neighbors_for_pressure`: neighbor threshold for pressure solve (default 7)
-  - `inactive_hold_steps`: require N consecutive under-threshold steps before pressure-skip
-  - `force_active_if_density_low`: keep particles pressure-active when `rho*` is low (default true)
-  - `force_active_rho_min`: threshold for forcing active (e.g. `0.95 * rho0`)
+### Long-Term Goals
+- GPU acceleration (CuPy / CUDA)
+- High-performance neighbor search
+- Multi-phase extension
+- Integration of ML-based methods (e.g. Neural Pressure Projection)
+- Research-grade CFD/SPH toolchain
 
-- **Negative pressure handling**
-  - `negative_pressure_mode`: `"none" | "hard_zero" | "soft_cap"`
-  - `negative_pressure_soft_factor`: $\alpha$ for `"soft_cap"` dynamic cap
-  - `negative_pressure_cap`: optional fixed cap (overrides dynamic cap)
+---
 
-- **Boundary response (AABB collision)**
-  - `boundary.eps`: push-out epsilon to avoid exact-on-wall teleports
-  - `boundary.restitution`, `boundary.friction`: normal reflection + tangential damping
+## Core Concepts
+
+### What is SPH?
+
+Smoothed Particle Hydrodynamics (SPH) is a **mesh-free Lagrangian method** where:
+
+- Fluid is represented by particles
+- Fields are approximated using kernel interpolation
+
+General form:
+
+
+A(x_i) = Σ_j m_j / ρ_j * A_j * W(x_i - x_j, h)
+
+
+---
+
+### Governing Equations
+
+We discretize the Navier-Stokes equations:
+
+#### Continuity (density)
+
+ρ_i = Σ_j m_j W_ij
+
+
+#### Momentum
+
+dv/dt = -1/ρ ∇p + ν ∇²v + f
+
+
+---
+
+### Pressure Model (WCSPH)
+
+
+p_i = k (ρ_i - ρ₀)
+
+
+Weakly compressible approximation.
+
+---
+
+### Pressure Force (symmetric form)
+
+
+a_i = - Σ_j m_j (p_i/ρ_i² + p_j/ρ_j²) ∇W_ij
+
+
+---
+
+### Viscosity (pairwise form)
+
+
+a_i = Σ_j m_j * (4ν (r_ij · ∇W_ij)) / ((ρ_i + ρ_j)(|r_ij|² + ε)) * (v_i - v_j)
+
+
+---
+
+### Kernel
+
+Cubic spline kernel is used:
+
+- compact support
+- standard in SPH literature
+- stable and efficient
+
+---
+
+## Current Simulation Focus
+
+### Reference Case: 2D Periodic Channel Flow
+
+- Domain: rectangular
+- Periodic in x-direction
+- Solid walls in y-direction
+- Fully filled with fluid
+- Driven by constant body force (gravity in x)
+
+This corresponds to **Poiseuille flow**.
+
+---
+
+## Validation Target
+
+Analytical solution for laminar flow:
+
+
+u(y) = (1 / (2μ)) * dp/dx * (y(H - y))
+
+
+Expected behavior:
+
+- Parabolic velocity profile
+- Zero velocity at walls
+- Maximum velocity at centerline
+
+---
+
+## Repository Structure
+
+
+src/sph/
+core/
+bootstrap.py # main simulation entry
+state.py # particle state container
+
+neighbors/
+    spatial_hash.py     # neighbor search (grid-based)
+
+sph/
+    density.py
+    pressure.py
+    viscosity.py
+    xsph.py
+    kernels.py
+
+visualization/
+    animate_particles.py
+
+scenes/
+examples/
+pipe_flow_1phase_periodic_2d.json
+
+out/
+pipe_flow_1phase_periodic/
+csv/
+vtk/
+profiles/
+anim/
+
+
+---
+
+## Simulation Pipeline
+
+1. Load scene (JSON)
+2. Initialize particles
+3. Build neighbor search
+4. Loop over time:
+   - Density computation
+   - Pressure computation
+   - Forces (pressure, viscosity, external)
+   - Optional XSPH
+   - Time integration
+5. Export results
+
+---
+
+## How to Run
+
+### 1. Setup environment
+
+```bash
+cd sph-framework
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Run simulation
+python -m sph.core.bootstrap scenes/examples/pipe_flow_1phase_periodic_2d.json
+
+4. Create animation
+python -m sph.visualization.animate_particles \
+    out/pipe_flow_1phase_periodic/csv \
+    --color-by vmag \
+    --save out/pipe_flow_1phase_periodic/anim/pipe_flow.gif
+   
+Important Design Decisions
+
+1. Periodic Domain Handling
+Implemented via minimum-image convention
+Critical for internal flow correctness
+2. Fluid-only XSPH
+Avoid artificial damping from boundary particles
+Improves internal flow behavior
+3. Explicit WCSPH baseline
+Used as initial solver
+Will be replaced by incompressible solvers
+Current Limitations
+WCSPH → compressibility artifacts
+No true inlet/outlet boundaries yet
+Boundary handling still simplified
+No adaptive timestep control beyond CFL
+CPU-only
+
+Next Steps (Critical)
+1. Solver Upgrade
+Implement IISPH or DFSPH
+Reduce density error
+Improve stability
+2. Boundary Conditions
+Improved wall treatment
+Inlet/outlet (non-periodic flow)
+3. Validation
+Automated Poiseuille comparison
+L2 error tracking
+4. Performance
+Vectorization
+GPU acceleration
+Better neighbor structures
+For Developers / LLMs Continuing This Project
+If you are extending this code:
+
+You MUST:
+
+Keep physics consistency across modules
+Use neighbor_search.relative_vector(...) for ALL interactions
+Not mix multiple scene types during debugging
+Validate changes using the pipe flow benchmark
+Priority Order
+Correctness > Performance
+Single benchmark > Multiple unfinished features
+Reproducibility > Complexity
+Key References
+Monaghan, J. J. (1992) — SPH fundamentals
+Ihmsen et al. (2014) — SPH tutorial
+Price (2012) — Astrophysical SPH
+Müller et al. (2003) — Particle-based fluids
+SPlisHSPlasH (open-source reference implementation)
+Vision
+
+This project is intended to evolve into:
+
+A modular, research-oriented SPH simulation framework bridging classical CFD, HPC, and modern AI-driven simulation methods.
+
+Author Notes
+
+This project is actively developed as part of an engineering learning and research trajectory focused on:
+
+CFD / SPH
+High-performance computing
+AI-assisted simulation
+
+The codebase is intentionally structured to be:
+
+readable
+extensible
+scientifically grounded
+License
+
+TBD

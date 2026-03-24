@@ -29,11 +29,12 @@ def compute_density_summation(
     rho = np.zeros((n,), dtype=np.float64)
 
     for i in range(n):
+        # include self contribution (j = i) like in standard density summation
         rho_i = state.mass[i] * cubic_spline_W(np.zeros(state.dim), h, state.dim)
 
         for j in neighbor_search.query(i, state.pos):
-            rij = neighbor_search.relative_vector(state.pos[i], state.pos[j])
-            rho_i += state.mass[j] * cubic_spline_W(rij, h, state.dim)
+            r = state.pos[i] - state.pos[j]
+            rho_i += state.mass[j] * cubic_spline_W(r, h, state.dim)
 
         rho[i] = rho_i
 
@@ -73,8 +74,8 @@ def compute_density_with_boundaries_eq83(
         rho_i = state.mass[i] * W0
 
         for j in neighbor_search.query(i, state.pos):
-            rij = neighbor_search.relative_vector(state.pos[i], state.pos[j])
-            rho_i += state.mass[j] * cubic_spline_W(rij, h=h, dim=state.dim)
+            r = state.pos[i] - state.pos[j]
+            rho_i += state.mass[j] * cubic_spline_W(r, h=h, dim=state.dim)
 
         rho[i] = rho_i
 

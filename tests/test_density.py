@@ -30,11 +30,10 @@ def test_density_summation_reasonable_in_block_interior():
     }
 
     state = build_fluid_block(scene)
-    support_radius = float(scene["neighbors"]["support_radius"])
-    h = support_radius / 2.0  # smoothing length; support_radius = 2h
+    h = float(scene["neighbors"]["support_radius"])
     rho0 = float(scene["material"]["rho0"])
 
-    ns = SpatialHash(support_radius=support_radius, dim=state.dim)
+    ns = SpatialHash(support_radius=h, dim=state.dim)
     ns.build(state.pos)
 
     rho = compute_density_summation(state=state, neighbor_search=ns, h=h)

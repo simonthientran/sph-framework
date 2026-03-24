@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -m sph.core.bootstrap scenes/examples/pipe_flow_1phase_periodic_2d.json --help)",
-      "Bash(pip show:*)"
-    ]
-  }
-}

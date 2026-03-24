@@ -6,7 +6,7 @@ from sph.sph.kernels import cubic_spline_gradW
 def test_gradW_zero_outside_support():
     h = 0.04
     dim = 2
-    g = cubic_spline_gradW(np.array([2.01 * h, 0.0]), h=h, dim=dim)
+    g = cubic_spline_gradW(np.array([1.01 * h, 0.0]), h=h, dim=dim)
     assert np.allclose(g, 0.0)
 
 

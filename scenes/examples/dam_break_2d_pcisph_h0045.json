@@ -66,9 +66,7 @@
   "solver": {
     "type": "pcisph",
     "max_iters": 12,
-    "density_tol": 0.005,
-    "debug": true,
-    "debug_dump_on_step": 50
+    "density_tol": 0.005
   },
   "export": {
     "csv": {
@@ -83,3 +81,5 @@
     }
   }
 }
+
+
