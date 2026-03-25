@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "name": "showcase_basin",
+    "version": 1,
+    "dimensions": 2,
+    "description": "Wide 2D basin collapse tuned for live visualization overlays.",
+    "use": "showcase",
+    "preferred_overlay": "speed",
+    "notes": "Diagonal gravity splash showcasing velocity and density overlays."
+  },
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0],
+    "max": [1.4, 0.7],
+    "boundary_layers": 4
+  },
+  "fluid": {
+    "type": "block",
+    "min": [0.05, 0.05],
+    "max": [0.55, 0.60],
+    "spacing": 0.018,
+    "initial_velocity": [0.0, 0.0]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.045
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 6500.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.08
+    }
+  },
+  "solver": {
+    "type": "wcsph",
+    "eos_k": 6500.0,
+    "pressure_clamp_min": -2.0e4,
+    "density_diffusion": {
+      "enable": true,
+      "alpha": 0.25
+    }
+  },
+  "forces": {
+    "gravity": [0.6, -9.81],
+    "xsph": {
+      "enable": true,
+      "eps": 0.05
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.35,
+    "dt_min": 5.0e-06,
+    "dt_max": 7.5e-04,
+    "steps": 600,
+    "log_every": 20
+  }
+}

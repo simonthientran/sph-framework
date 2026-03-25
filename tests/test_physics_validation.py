@@ -67,7 +67,8 @@ def test_density_matches_direct_pairwise_sum_for_symmetric_square():
     expected = np.zeros_like(rho)
     for i in range(state.n):
         for j in range(state.n):
-            expected[i] += state.mass[j] * cubic_spline_W(state.pos[i] - state.pos[j], h=h, dim=2)
+            rel = ns.relative_vector(state.pos[i], state.pos[j])
+            expected[i] += state.mass[j] * cubic_spline_W(rel, h=h, dim=2)
 
     assert np.allclose(rho, expected, rtol=1e-12, atol=1e-12)
     assert np.allclose(rho, rho[0], rtol=1e-12, atol=1e-12)

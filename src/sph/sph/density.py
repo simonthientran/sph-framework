@@ -4,7 +4,7 @@ import numpy as np
 
 from sph.core.state import ParticleState
 from sph.neighbors.spatial_hash import SpatialHash
-from sph.sph.kernels import cubic_spline_W
+from sph.sph.kernels import cubic_spline_W, cubic_spline_W_vec
 
 
 def compute_density_summation(
@@ -33,7 +33,7 @@ def compute_density_summation(
         rho_i = state.mass[i] * cubic_spline_W(np.zeros(state.dim), h, state.dim)
 
         for j in neighbor_search.query(i, state.pos):
-            r = state.pos[i] - state.pos[j]
+            r = neighbor_search.relative_vector(state.pos[i], state.pos[j])
             rho_i += state.mass[j] * cubic_spline_W(r, h, state.dim)
 
         rho[i] = rho_i
@@ -74,11 +74,10 @@ def compute_density_with_boundaries_eq83(
         rho_i = state.mass[i] * W0
 
         for j in neighbor_search.query(i, state.pos):
-            r = state.pos[i] - state.pos[j]
+            r = neighbor_search.relative_vector(state.pos[i], state.pos[j])
             rho_i += state.mass[j] * cubic_spline_W(r, h=h, dim=state.dim)
 
         rho[i] = rho_i
 
     return rho
-
 

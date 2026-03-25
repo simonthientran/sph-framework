@@ -7,6 +7,123 @@ import numpy as np
 
 from sph.core.state import ParticleState
 
+_AXIS_NAMES = ("x", "y", "z")
+
+
+def _get_dimensions(scene: dict) -> int:
+    meta = scene.get("meta")
+    if isinstance(meta, dict) and "dimensions" in meta:
+        return int(meta["dimensions"])
+    if "dim" in scene:
+        return int(scene["dim"])
+    if "dimensions" in scene:
+        return int(scene["dimensions"])
+    raise KeyError("Scene must define 'meta.dimensions' or 'dim'.")
+
+
+def _get_particle_spacing(scene: dict) -> float:
+    fluid = scene.get("fluid")
+    if isinstance(fluid, dict):
+        spacing = fluid.get("spacing")
+        if spacing is not None:
+            return float(spacing)
+    ic = scene.get("initial_conditions")
+    if isinstance(ic, dict):
+        spacing = ic.get("spacing")
+        if spacing is not None:
+            return float(spacing)
+    if "particle_spacing" in scene:
+        return float(scene["particle_spacing"])
+    raise KeyError("Scene must define fluid particle spacing.")
+
+
+def _get_rest_density(scene: dict) -> float:
+    material = scene.get("material")
+    if isinstance(material, dict) and "rho0" in material:
+        return float(material["rho0"])
+    if "rest_density" in scene:
+        return float(scene["rest_density"])
+    raise KeyError("Scene must define rest density (material.rho0 or rest_density).")
+
+
+def _get_support_radius(scene: dict, spacing: float) -> float:
+    neighbors = scene.get("neighbors")
+    if isinstance(neighbors, dict):
+        sr = neighbors.get("support_radius") or neighbors.get("h")
+        if sr is not None:
+            return float(sr)
+    if "smoothing_length" in scene:
+        return float(scene["smoothing_length"])
+    # fallback: twice the particle spacing
+    return 2.0 * spacing
+
+
+def _array_from_min_max(block: dict, dim: int) -> tuple[np.ndarray, np.ndarray] | None:
+    if "min" in block and "max" in block:
+        vmin = np.array(block["min"], dtype=np.float64)
+        vmax = np.array(block["max"], dtype=np.float64)
+        return vmin, vmax
+    mins = []
+    maxs = []
+    for axis in _AXIS_NAMES[:dim]:
+        key_min = f"{axis}min"
+        key_max = f"{axis}max"
+        if key_min not in block or key_max not in block:
+            return None
+        mins.append(float(block[key_min]))
+        maxs.append(float(block[key_max]))
+    return np.array(mins, dtype=np.float64), np.array(maxs, dtype=np.float64)
+
+
+def _get_fluid_block(scene: dict, dim: int) -> tuple[np.ndarray, np.ndarray]:
+    fluid = scene.get("fluid")
+    if isinstance(fluid, dict):
+        block = _array_from_min_max(fluid, dim)
+        if block is not None:
+            return block
+    ic = scene.get("initial_conditions", {})
+    if isinstance(ic, dict) and ic.get("type", "block") == "block":
+        block = _array_from_min_max(ic, dim)
+        if block is not None:
+            return block
+    raise KeyError("Scene must define a fluid block (fluid.min/max or initial_conditions block).")
+
+
+def _get_domain_bounds(scene: dict, dim: int, fluid_min: np.ndarray, fluid_max: np.ndarray, spacing: float) -> tuple[np.ndarray, np.ndarray]:
+    domain = scene.get("domain", {})
+    if isinstance(domain, dict):
+        converted = _array_from_min_max(domain, dim)
+        if converted is not None:
+            return converted
+    pad = spacing
+    return fluid_min - pad, fluid_max + pad
+
+
+def _get_initial_velocity(scene: dict, dim: int) -> np.ndarray:
+    def _vector_from_container(container: dict | None) -> np.ndarray | None:
+        if not isinstance(container, dict):
+            return None
+        vec = container.get("initial_velocity") or container.get("velocity")
+        if vec is not None:
+            arr = np.array(vec, dtype=np.float64)
+            if arr.shape[0] >= dim:
+                return arr[:dim]
+        comps = []
+        for axis in _AXIS_NAMES[:dim]:
+            key = f"v{axis}"
+            if key not in container:
+                return None
+            comps.append(float(container[key]))
+        return np.array(comps, dtype=np.float64)
+
+    vec = _vector_from_container(scene.get("fluid"))
+    if vec is not None:
+        return vec
+    vec = _vector_from_container(scene.get("initial_conditions"))
+    if vec is not None:
+        return vec
+    return np.zeros(dim, dtype=np.float64)
+
 
 # region agent log
 def _agent_log(hypothesis_id: str, message: str, data: dict) -> None:
@@ -92,33 +209,21 @@ def build_scene_state(scene: dict) -> ParticleState:
     )
     # endregion
 
-    meta = scene["meta"]
-    dim = int(meta["dimensions"])
+    dim = _get_dimensions(scene)
     if dim != 2:
         raise ValueError("This boundary builder currently supports only 2D (dim=2).")
 
-    # --- scene parameters
-    spacing = float(scene["fluid"]["spacing"])
-    rho0 = float(scene["material"]["rho0"])
+    spacing = _get_particle_spacing(scene)
+    rho0 = _get_rest_density(scene)
+    h = _get_support_radius(scene, spacing)
 
-    # support radius used to decide how many boundary layers we need
-    h = float(scene["neighbors"]["support_radius"])
+    fmin, fmax = _get_fluid_block(scene, dim)
+    domain_min, domain_max = _get_domain_bounds(scene, dim, fmin, fmax, spacing)
     layers = int(scene.get("domain", {}).get("boundary_layers", int(np.ceil(h / spacing)) + 1))
-
-    domain_min = np.array(scene["domain"]["min"], dtype=np.float64)
-    domain_max = np.array(scene["domain"]["max"], dtype=np.float64)
-
-    # --- fluid block
-    fluid = scene["fluid"]
-    if fluid["type"] != "block":
-        raise ValueError(f"unsupported fluid type: {fluid['type']}")
-
-    fmin = np.array(fluid["min"], dtype=np.float64)
-    fmax = np.array(fluid["max"], dtype=np.float64)
 
     fluid_pos = _grid_points_2d(fmin, fmax, spacing)
 
-    v0 = np.array(fluid.get("initial_velocity", [0.0, 0.0]), dtype=np.float64)
+    v0 = _get_initial_velocity(scene, dim)
     fluid_vel = np.repeat(v0[None, :], fluid_pos.shape[0], axis=0)
 
     # --- boundary sampling (static)
@@ -159,18 +264,10 @@ def build_fluid_block(scene: dict) -> ParticleState:
     densities, pressures) remains identical; only the container gains
     an explicit boundary flag.
     """
-    meta = scene["meta"]
-    dim = int(meta["dimensions"])
-
-    fluid = scene["fluid"]
-    if fluid["type"] != "block":
-        raise ValueError(f"unsupported fluid type: {fluid['type']}")
-
-    pmin = np.array(fluid["min"], dtype=np.float64)
-    pmax = np.array(fluid["max"], dtype=np.float64)
-    spacing = float(fluid["spacing"])
-
-    v0 = np.array(fluid.get("initial_velocity", [0.0] * dim), dtype=np.float64)
+    dim = _get_dimensions(scene)
+    pmin, pmax = _get_fluid_block(scene, dim)
+    spacing = _get_particle_spacing(scene)
+    v0 = _get_initial_velocity(scene, dim)
 
     if pmin.shape != (dim,) or pmax.shape != (dim,):
         raise ValueError("fluid.min/max must match dimensions")
@@ -201,7 +298,7 @@ def build_fluid_block(scene: dict) -> ParticleState:
     # Mass: rho0 * spacing^dim, as in the original implementation.
     # This preserves the same volumetric mass distribution and therefore
     # keeps density-related physics identical.
-    rho0 = float(scene["material"]["rho0"])
+    rho0 = _get_rest_density(scene)
     mass_value = rho0 * (spacing ** dim)
     mass = np.full((n,), mass_value, dtype=np.float64)
 

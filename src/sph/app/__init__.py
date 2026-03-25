@@ -1,0 +1,1 @@
+"""Interactive SPH application components."""

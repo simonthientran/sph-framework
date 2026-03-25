@@ -54,7 +54,8 @@ def pressure_acceleration_symmetric(
             rhoj = state.rho[j]
             rhoj2 = rhoj * rhoj + eps
 
-            gradW = cubic_spline_gradW(state.pos[i] - state.pos[j], h=h, dim=dim)
+            rel = neighbor_search.relative_vector(state.pos[i], state.pos[j])
+            gradW = cubic_spline_gradW(rel, h=h, dim=dim)
 
             acc -= state.mass[j] * (pi / rhoi2 + pj / rhoj2) * gradW
 
@@ -108,7 +109,8 @@ def pressure_acceleration_with_boundaries_eq84(
         acc = np.zeros((dim,), dtype=np.float64)
 
         for j in neighbor_search.query(i, state.pos):
-            gradW = cubic_spline_gradW(state.pos[i] - state.pos[j], h=h, dim=dim)
+            rel = neighbor_search.relative_vector(state.pos[i], state.pos[j])
+            gradW = cubic_spline_gradW(rel, h=h, dim=dim)
 
             if state.is_boundary[j]:
                 # boundary neighbor: rho_j = rho0, p_j = p_i (mirroring)
@@ -124,5 +126,4 @@ def pressure_acceleration_with_boundaries_eq84(
         a[i] = acc
 
     return a
-
 

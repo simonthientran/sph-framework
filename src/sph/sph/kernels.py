@@ -88,3 +88,115 @@ def cubic_spline_gradW(r: np.ndarray, h: float, dim: int) -> np.ndarray:
         dW_dq = sigma * (-6.0 * (1.0 - q) ** 2)
 
     return (dW_dq / h) * (r / rn)
+
+
+def cubic_spline_W_vec(r_vec: np.ndarray, h: float, dim: int) -> np.ndarray:
+    """
+    Vectorized cubic spline smoothing kernel W(r,h).
+
+    Args:
+        r_vec: displacement vectors, shape (N, dim)
+        h: smoothing length
+        dim: spatial dimension
+
+    Returns:
+        W: kernel values, shape (N,)
+    """
+    h = float(h)
+    if h <= 0.0:
+        raise ValueError("h must be > 0")
+
+    if dim == 1:
+        sigma = 4.0 / (3.0 * h)
+    elif dim == 2:
+        sigma = 40.0 / (7.0 * np.pi * h * h)
+    elif dim == 3:
+        sigma = 8.0 / (np.pi * h ** 3)
+    else:
+        raise ValueError("dim must be 1, 2 or 3")
+
+    # Compute ||r|| for all vectors
+    q = np.linalg.norm(r_vec, axis=1) / h  # shape (N,)
+
+    # Piecewise evaluation
+    W = np.zeros_like(q, dtype=np.float64)
+
+    # q <= 0.5: 6(q^3 - q^2) + 1
+    mask1 = q <= 0.5
+    q1 = q[mask1]
+    W[mask1] = sigma * (6.0 * (q1 ** 3 - q1 ** 2) + 1.0)
+
+    # 0.5 < q <= 1: 2(1 - q)^3
+    mask2 = (q > 0.5) & (q <= 1.0)
+    q2 = q[mask2]
+    W[mask2] = sigma * (2.0 * (1.0 - q2) ** 3)
+
+    # q > 1: 0 (already initialized to zero)
+
+    return W
+
+
+def cubic_spline_gradW_vec(r_vec: np.ndarray, h: float, dim: int) -> np.ndarray:
+    """
+    Vectorized gradient of cubic spline kernel ∇W(r,h).
+
+    Args:
+        r_vec: displacement vectors, shape (N, dim)
+        h: smoothing length
+        dim: spatial dimension
+
+    Returns:
+        gradW: kernel gradients, shape (N, dim)
+    """
+    h = float(h)
+    if h <= 0.0:
+        raise ValueError("h must be > 0")
+
+    if dim == 1:
+        sigma = 4.0 / (3.0 * h)
+    elif dim == 2:
+        sigma = 40.0 / (7.0 * np.pi * h * h)
+    elif dim == 3:
+        sigma = 8.0 / (np.pi * h ** 3)
+    else:
+        raise ValueError("dim must be 1, 2 or 3")
+
+    # Compute ||r|| for all vectors
+    rn = np.linalg.norm(r_vec, axis=1)  # shape (N,)
+
+    # Initialize gradient
+    gradW = np.zeros_like(r_vec, dtype=np.float64)
+
+    # Avoid division by zero for r = 0
+    nonzero_mask = rn > 0.0
+    rn_nz = rn[nonzero_mask]
+    r_nz = r_vec[nonzero_mask]
+
+    q = rn_nz / h
+
+    # Compact support: q > 1 => gradient is zero (already initialized)
+    valid_mask = q <= 1.0
+    q_valid = q[valid_mask]
+    r_valid = r_nz[valid_mask]
+    rn_valid = rn_nz[valid_mask]
+
+    # Piecewise derivative
+    dW_dq = np.zeros_like(q_valid, dtype=np.float64)
+
+    # q <= 0.5: d/dq = 18 q^2 - 12 q
+    mask1 = q_valid <= 0.5
+    dW_dq[mask1] = sigma * (18.0 * q_valid[mask1] ** 2 - 12.0 * q_valid[mask1])
+
+    # 0.5 < q <= 1: d/dq = -6(1 - q)^2
+    mask2 = q_valid > 0.5
+    dW_dq[mask2] = sigma * (-6.0 * (1.0 - q_valid[mask2]) ** 2)
+
+    # Compute gradient: (dW/dq) * (1/h) * r/||r||
+    grad_valid = (dW_dq[:, np.newaxis] / h) * (r_valid / rn_valid[:, np.newaxis])
+
+    # Place results back (need to map through nonzero_mask and valid_mask)
+    nonzero_indices = np.where(nonzero_mask)[0]
+    valid_indices = nonzero_indices[valid_mask]
+    gradW[valid_indices] = grad_valid
+
+    return gradW

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 from sph.sph.xsph import xsph_velocity_correction
@@ -15,6 +16,7 @@ from sph.sph.pressure import (
     pressure_acceleration_with_boundaries_eq84,
 )
 from sph.sph.viscosity import viscosity_acceleration_laplace_eq23
+from sph.sph.kernels import cubic_spline_W
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,48 @@ class SimConfig:
     # does not change the underlying physics.
     enable_viscosity: bool = False
     kinematic_viscosity: float = 0.0  # nu
+    enable_density_diffusion: bool = True
+    density_diffusion_strength: float = 0.15
+    pressure_clamp_min: Optional[float] = 0.0
+
+
+def _apply_density_smoothing(
+    state: ParticleState,
+    neighbor_search: SpatialHash,
+    h: float,
+    alpha: float,
+) -> None:
+    alpha = float(alpha)
+    if alpha <= 0.0:
+        return
+
+    fluid_ids = state.fluid_indices
+    if fluid_ids.size == 0:
+        return
+
+    dim = state.dim
+    zeros = np.zeros((dim,), dtype=np.float64)
+    W0 = cubic_spline_W(zeros, h=h, dim=dim)
+    rho_new = state.rho.copy()
+
+    for i in fluid_ids:
+        weight_sum = state.mass[i] * W0
+        rho_weighted = state.rho[i] * state.mass[i] * W0
+
+        for j in neighbor_search.query(int(i), state.pos):
+            if state.is_boundary[j]:
+                continue
+            rel = neighbor_search.relative_vector(state.pos[i], state.pos[j])
+            Wij = cubic_spline_W(rel, h=h, dim=dim)
+            w = state.mass[j] * Wij
+            weight_sum += w
+            rho_weighted += state.rho[j] * w
+
+        if weight_sum > 1e-12:
+            avg = rho_weighted / weight_sum
+            rho_new[i] = (1.0 - alpha) * state.rho[i] + alpha * avg
+
+    state.rho[:] = rho_new
 
 
 def compute_dt_cfl(
@@ -103,6 +147,8 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
 
     # --- density reconstruction
     state.rho[:] = compute_density_summation(state=state, neighbor_search=ns, h=h)
+    if cfg.enable_density_diffusion:
+        _apply_density_smoothing(state=state, neighbor_search=ns, h=h, alpha=cfg.density_diffusion_strength)
 
     # --- time step (CFL or fixed)
     if cfg.use_cfl:
@@ -136,6 +182,8 @@ def step_wc_sph(state: ParticleState, cfg: SimConfig, particle_size: float) -> f
     state.p[:] = pressure_state_equation_linear(
         state.rho, rho0=float(cfg.rho0), k=float(cfg.eos_k)
     )
+    if cfg.pressure_clamp_min is not None:
+        state.p[:] = np.maximum(state.p, float(cfg.pressure_clamp_min))
 
     # --- pressure acceleration
     a_p = pressure_acceleration_symmetric(state=state, neighbor_search=ns, h=h)
@@ -189,6 +237,8 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
         h=h,
         rho0=cfg.rho0,
     )
+    if cfg.enable_density_diffusion:
+        _apply_density_smoothing(state=state, neighbor_search=ns, h=h, alpha=cfg.density_diffusion_strength)
 
     # (dt) CFL (Eq. 33) or fixed, applied to moving (fluid) particles
     if cfg.use_cfl:
@@ -215,6 +265,8 @@ def step_wcsph_algorithm1_with_boundaries(state: ParticleState, cfg: SimConfig, 
         rho0=cfg.rho0,
         k=cfg.eos_k,
     )
+    if cfg.pressure_clamp_min is not None:
+        state.p[:] = np.maximum(state.p, float(cfg.pressure_clamp_min))
 
     # (4) pressure acceleration incl. boundary (Eq. 84 + mirroring)
     a_p = pressure_acceleration_with_boundaries_eq84(
@@ -283,4 +335,3 @@ def step_simulation(
         )
 
     raise ValueError(f"Unknown solver type: {solver_type!r}")
-

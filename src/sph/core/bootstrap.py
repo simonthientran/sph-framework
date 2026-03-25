@@ -30,14 +30,27 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-
 from sph.core.diagnostics import compute_step_diagnostics
-from sph.core.simulator import SimConfig, step_simulation
+from sph.core.simulator import step_simulation
 from sph.core.state_builder import build_scene_state
 from sph.io.csv_export import export_particles_csv
 from sph.io.vtk_export import export_particles_vtk_legacy
 from sph.neighbors.spatial_hash import SpatialHash
+from sph.core.simulation import scene_to_sim_config
+
+
+def _require(scene: dict, path: tuple[str, ...]) -> float:
+    """Return nested scene value or raise a descriptive error."""
+
+    node = scene
+    walked = []
+    for key in path:
+        walked.append(key)
+        if not isinstance(node, dict) or key not in node:
+            joined = ".".join(walked)
+            raise KeyError(f"Scene configuration missing required key '{joined}'.")
+        node = node[key]
+    return node
 
 
 def main() -> int:
@@ -68,31 +81,16 @@ def main() -> int:
     state = build_scene_state(scene)
 
     dim = int(state.dim)
-    spacing = float(scene["fluid"]["spacing"])
-    h = float(scene["neighbors"]["support_radius"])
-    rho0 = float(scene["material"]["rho0"])
-
-    # Gravity from scene (fallback: -9.81 in y for 2D)
-    g = np.array(scene.get("forces", {}).get("gravity", [0.0, -9.81])[:dim], dtype=np.float64)
+    spacing = float(_require(scene, ("fluid", "spacing")))
+    h = float(_require(scene, ("neighbors", "support_radius")))
+    rho0 = float(_require(scene, ("material", "rho0")))
 
     # Time settings (dt is selected inside the solver according to Eq. (33) if enabled)
     time_cfg = scene.get("time", {})
-    use_cfl = (time_cfg.get("mode", "cfl") == "cfl")
     steps = int(time_cfg.get("steps", 50))
     log_every = int(time_cfg.get("log_every", 10))
 
-    cfg = SimConfig(
-        support_radius=h,
-        rho0=rho0,
-        eos_k=float(scene.get("material", {}).get("eos", {}).get("k", 500.0)),
-        g=g,
-        cfl_lambda=float(time_cfg.get("cfl", 0.4)),
-        dt_min=float(time_cfg.get("dt_min", 1e-5)),
-        dt_max=float(time_cfg.get("dt_max", 5e-4)),
-        dt_fixed=float(time_cfg.get("dt_fixed", 5e-4)),
-        use_cfl=bool(use_cfl),
-        # viscosity fields are optional in SimConfig and default to disabled
-    )
+    cfg = scene_to_sim_config(scene=scene, dim=dim, support_radius=h)
 
     # -------------------------------------------------------------------------
     # Optional exports controlled by scene:
@@ -138,13 +136,14 @@ def main() -> int:
         diag = compute_step_diagnostics(step=s + 1, dt=dt, state=state, rho0=rho0, neighbor_search=ns)
 
         if (s == 0) or ((s + 1) % max(1, log_every) == 0):
+            neighbor_flag = "" if diag.neigh_min >= 12 else " (LOW)"
             print(
                 f"[STEP {diag.step:04d}] dt={diag.dt:.3e} "
                 f"|v|max={diag.v_max:.3e} "
                 f"rho(min/avg/max)={diag.rho_min:.2f}/{diag.rho_mean:.2f}/{diag.rho_max:.2f} "
                 f"err% (avg)={100.0 * diag.rho_rel_err_mean:.2f} "
                 f"p(min/avg/max)={diag.p_min:.2f}/{diag.p_mean:.2f}/{diag.p_max:.2f} "
-                f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}"
+                f"neigh(min/avg/max)={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max}{neighbor_flag}"
             )
 
         if csv_enabled and ((s + 1) % max(1, csv_every) == 0):
@@ -159,5 +158,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

@@ -1,52 +1,82 @@
 {
-  "name": "pipe_flow_2d",
+  "meta": {
+    "name": "pipe_flow_2d",
+    "version": 2,
+    "dimensions": 2,
+    "authors": ["SPH Framework Team"],
+    "description": "Periodic-like 2D internal single-phase flow used for velocity-profile validation."
+  },
 
-  "dim": 2,
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0],
+    "max": [1.0, 0.2],
+    "boundary_layers": 3
+  },
 
-  "particle_spacing": 0.02,
-  "rest_density": 1000.0,
+  "fluid": {
+    "type": "block",
+    "min": [0.0, 0.03],
+    "max": [1.0, 0.17],
+    "spacing": 0.008,
+    "initial_velocity": [0.0, 0.0]
+  },
 
-  "smoothing_length": 0.04,
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.0208
+  },
 
-  "time": {
-    "dt": 0.0005,
-    "steps": 500,
-    "use_cfl": true
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 8000.0
+    }
   },
 
   "solver": {
     "type": "wcsph",
-    "eos_k": 2000.0
-  },
-
-  "forces": {
-    "gravity": [1.0, 0.0],
-    "viscosity": {
-      "enabled": true,
-      "nu": 0.1
-    },
-    "xsph": {
-      "enabled": true,
-      "c": 0.1
+    "eos_k": 8000.0,
+    "pressure_clamp_min": 0.0,
+    "density_diffusion": {
+      "enable": true,
+      "alpha": 0.25
     }
   },
 
-  "domain": {
-    "xmin": 0.0,
-    "xmax": 1.0,
-    "ymin": 0.0,
-    "ymax": 0.2
+  "forces": {
+    "gravity": [0.003, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.12
+    },
+    "xsph": {
+      "enable": true,
+      "eps": 0.05
+    }
   },
 
-  "boundary": {
-    "type": "static"
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.18,
+    "dt_min": 2e-06,
+    "dt_max": 1.0e-04,
+    "dt_fixed": 1.0e-04,
+    "steps": 1200,
+    "log_every": 20
   },
 
-  "initial_conditions": {
-    "type": "block",
-    "xmin": 0.0,
-    "xmax": 1.0,
-    "ymin": 0.02,
-    "ymax": 0.18
+  "export": {
+    "csv": {
+      "enable": false,
+      "every": 100,
+      "dir": "out/csv"
+    },
+    "vtk": {
+      "enable": false,
+      "every": 100,
+      "dir": "out/vtk"
+    }
   }
 }
