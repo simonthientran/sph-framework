@@ -516,10 +516,18 @@ class MainWindow(QMainWindow):
         self._lbl_scene.setStyleSheet(
             f'color: {COLORS["text_mid"]}; font-size: 11px;')
         sg.addWidget(self._lbl_scene, 0, 0, 1, 2)
+
+        sg.addWidget(QLabel('Backend:'), 1, 0)
+        self._combo_backend = QComboBox()
+        self._combo_backend.addItems(['CUDA (auto)', 'CPU'])
+        self._combo_backend.setToolTip(
+            'CUDA (auto): tries GPU, falls back to CPU\nCPU: always use CPU')
+        sg.addWidget(self._combo_backend, 1, 1)
+
         load_btn = QPushButton('Load Scene...')
         load_btn.setObjectName('accent_btn')
         load_btn.clicked.connect(self._open_scene)
-        sg.addWidget(load_btn, 1, 0, 1, 2)
+        sg.addWidget(load_btn, 2, 0, 1, 2)
         layout.addWidget(scene_grp)
 
         # Solver params
@@ -745,8 +753,23 @@ class MainWindow(QMainWindow):
     def _load_scene(self, path: str):
         try:
             from sph.core.simulation import SimulationRunner
-            self.runner = SimulationRunner(
-                Path(path), backend_name='numba_cpu')
+
+            # Resolve backend from combo selection
+            combo_text = self._combo_backend.currentText()
+            if 'CUDA' in combo_text:
+                try:
+                    self.runner = SimulationRunner(
+                        Path(path), backend_name='numba_cuda')
+                    self._log_msg('Backend: CUDA')
+                except Exception as cuda_err:
+                    self._log_msg(f'CUDA unavailable ({cuda_err}), using CPU', error=False)
+                    self.runner = SimulationRunner(
+                        Path(path), backend_name='numba_cpu')
+                    self._log_msg('Backend: CPU')
+            else:
+                self.runner = SimulationRunner(
+                    Path(path), backend_name='numba_cpu')
+                self._log_msg('Backend: CPU')
 
             fl = self.runner.backend.sim.fluid
             bd = self.runner.backend.sim.boundary
