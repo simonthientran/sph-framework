@@ -129,6 +129,9 @@ class DFSPHTimeStep(TimeStep):
         self._last_cuda_stage_timings_ms: dict[str, float] = {}
         # Extra per-stage metrics (e.g. pair counts) reported by CUDA callback
         self._last_cuda_stage_extra_metrics: dict[str, float] = {}
+        # Neighbor-cache: pairs2 from step N equals pairs at start of step N+1.
+        # Storing them avoids one full KD-tree build per step on the CPU path.
+        self._cached_pairs: NeighborPairs | None = None
 
     def step(
         self,
@@ -249,8 +252,16 @@ class DFSPHTimeStep(TimeStep):
         else:
             # ── CPU / debug path ──────────────────────────────────────
             # 1. Build neighbors + density field
+            # Optimisation: pairs2 from the previous step's post-integration
+            # rebuild equals pairs at the start of this step (positions are
+            # identical), so we reuse it to skip one KD-tree build.
             t_stage = time.perf_counter()
-            pairs = self._build_neighbors(fluid, boundary)
+            if self._cached_pairs is not None:
+                pairs = self._cached_pairs
+                fluid.neighbor_pairs = pairs
+                self._cached_pairs = None
+            else:
+                pairs = self._build_neighbors(fluid, boundary)
             timings["neighbor_search"] += time.perf_counter() - t_stage
 
             t_stage = time.perf_counter()
@@ -424,6 +435,13 @@ class DFSPHTimeStep(TimeStep):
             "free_surface_density_raise_count": int(density_raise_count),
             "free_surface_density_raise_mean": float(density_raise_mean),
         }
+        # Cache pairs2 for next step's pre-step neighbor build.
+        # pairs2 was built at the final particle positions of this step,
+        # which are identical to the starting positions of the next step,
+        # so the cache is always valid when the CUDA path is not active.
+        if not _cuda_fast:
+            self._cached_pairs = pairs2  # type: ignore[possibly-undefined]
+
         self.last_report = report
         self.last_stage_timings_ms = {key: value * 1000.0 for key, value in timings.items()}
         return iter_cd, iter_df
