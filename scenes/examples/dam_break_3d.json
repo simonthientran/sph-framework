@@ -1,0 +1,93 @@
+{
+  "meta": {
+    "name": "dam_break_3d",
+    "version": 1,
+    "dimensions": 3,
+    "description": "3D dam break demo scene using an STL box container, DFSPH solve, and VTK export for playback/rendering."
+  },
+
+  "fluids": [
+    {
+      "type": "box",
+      "name": "dam_column",
+      "spacing": 0.02,
+      "min": [0.05, 0.05, 0.05],
+      "max": [0.35, 0.50, 0.35],
+      "initial_velocity": [0.0, 0.0, 0.0]
+    }
+  ],
+
+  "boundaries": [
+    {
+      "type": "stl",
+      "file": "../../assets/box.stl",
+      "sampling": "poisson",
+      "n_layers": 3
+    }
+  ],
+
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.065
+  },
+
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 5000.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    }
+  },
+
+  "solver": {
+    "type": "dfsph",
+    "prefer_iterative": true,
+    "eos_k": 5000.0,
+    "eta_cd": 0.012,
+    "density_diffusion": {
+      "enable": true,
+      "delta": 0.1
+    },
+    "free_surface_stabilization": {
+      "enable": true,
+      "mode": "density_shift",
+      "strength": 0.4,
+      "target_ratio": 0.88,
+      "max_raise_ratio": 0.12
+    }
+  },
+
+  "forces": {
+    "gravity": [0.0, -9.81, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    },
+    "xsph": {
+      "enable": false
+    }
+  },
+
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1.0e-5,
+    "dt_max": 0.001,
+    "steps": 500
+  },
+
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": true,
+      "every": 5,
+      "dir": "/home/simon/sph-framework/out/dam_break_3d"
+    }
+  }
+}
