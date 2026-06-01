@@ -28,6 +28,11 @@
       "center": [0.1, 0.1],
       "radius": 0.07,
       "boundary_layers": 2
+    },
+    "inlet_outlet": {
+      "enable": true,
+      "outlet_x": 0.19,
+      "inlet_x": 0.01
     }
   },
 

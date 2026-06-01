@@ -114,6 +114,20 @@ class Simulator:
         # Create time step integrator
         self.time_step = self._create_time_step()
 
+        # Inlet / outlet (optional)
+        io_cfg = domain_cfg.get("inlet_outlet", {}) if domain_cfg else {}
+        if io_cfg.get("enable", False):
+            self._outlet_x = float(io_cfg.get("outlet_x", 0.19))
+            self._inlet_x = float(io_cfg.get("inlet_x", 0.01))
+            # Snapshot yz cross-section from the first x-slice of the initial fluid
+            x_first = float(self.fluid.positions[:, 0].min())
+            mask_first = np.abs(self.fluid.positions[:, 0] - x_first) < 0.5 * self.spacing
+            self._inlet_yz = self.fluid.positions[mask_first, 1:].copy()
+        else:
+            self._outlet_x = None
+            self._inlet_x = None
+            self._inlet_yz = None
+
         self.current_step = 0
 
     def _load_scene(self) -> dict:
@@ -524,6 +538,10 @@ class Simulator:
         if self.z_min is not None and self.z_max is not None:
             self.time_step.apply_periodic_bc_z(self.fluid, self.z_min, self.z_max)
 
+        # Inlet / outlet (open-domain flow)
+        if self._inlet_yz is not None:
+            self._apply_inlet_outlet()
+
         self.current_step += 1
 
     def run(self, n_steps: int, callback=None):
@@ -540,6 +558,59 @@ class Simulator:
 
             if callback is not None:
                 callback(self.current_step, self.fluid, self.boundary)
+
+    def _apply_inlet_outlet(self) -> None:
+        """
+        Open-domain inlet/outlet: remove particles past the outlet plane and
+        inject a fresh layer at the inlet plane to maintain particle count.
+
+        Outlet: particles at x > outlet_x are removed.
+        Inlet:  when particles are removed, one cross-section layer is added at
+                inlet_x with the current mean flow velocity in x.
+        """
+        fl = self.fluid
+
+        # --- Outlet ---
+        keep = fl.positions[:, 0] <= self._outlet_x
+        n_removed = int(np.sum(~keep))
+        if n_removed == 0:
+            return
+
+        # Compress all per-particle arrays by the keep mask
+        _vec_attrs = ("positions", "velocities", "accelerations")
+        _scl_attrs = ("densities", "pressures", "k_dfsph",
+                      "p_cd_prev", "p_df_prev", "rho_self", "rho_ff", "rho_fb")
+        for attr in _vec_attrs:
+            setattr(fl, attr, getattr(fl, attr)[keep])
+        for attr in _scl_attrs:
+            if hasattr(fl, attr):
+                setattr(fl, attr, getattr(fl, attr)[keep])
+        fl.n = len(fl.positions)
+
+        # --- Inlet: inject one layer with bulk mean velocity ---
+        vx_mean = float(fl.velocities[:, 0].mean())
+        n_add = len(self._inlet_yz)
+
+        new_pos = np.empty((n_add, fl.dim), dtype=np.float64)
+        new_pos[:, 0] = self._inlet_x
+        new_pos[:, 1:] = self._inlet_yz
+
+        new_vel = np.zeros((n_add, fl.dim), dtype=np.float64)
+        new_vel[:, 0] = vx_mean
+
+        fl.positions = np.vstack([fl.positions, new_pos])
+        fl.velocities = np.vstack([fl.velocities, new_vel])
+        fl.accelerations = np.vstack(
+            [fl.accelerations, np.zeros((n_add, fl.dim), dtype=np.float64)]
+        )
+        fl.densities = np.concatenate([fl.densities, np.full(n_add, fl.rho0, dtype=np.float64)])
+        fl.pressures = np.concatenate([fl.pressures, np.zeros(n_add, dtype=np.float64)])
+        for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "rho_self", "rho_ff", "rho_fb"):
+            if hasattr(fl, attr):
+                setattr(fl, attr, np.concatenate(
+                    [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]
+                ))
+        fl.n = len(fl.positions)
 
     def _normalize_solver_stats(self, stats):
         if isinstance(stats, dict):
