@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "name": "Pipe Flow 2D Dense (profiling)",
+    "version": 1,
+    "dimensions": 2,
+    "authors": [
+      "SPH Framework Team"
+    ],
+    "description": "Denser resolution variant of pipe_flow_2d for GPU scaling / profiling only.",
+    "use": "single_phase_benchmark",
+    "scene_type": "internal_flow",
+    "preferred_overlay": "density",
+    "notes": "Same physics setup as pipe_flow_2d.json with finer spacing (~2.5x more fluid particles)."
+  },
+  "domain": {
+    "type": "box",
+    "min": [
+      0.0,
+      0.0
+    ],
+    "max": [
+      1.0,
+      0.2
+    ],
+    "boundary_layers": 3,
+    "periodic_x": true
+  },
+  "fluid": {
+    "type": "block",
+    "min": [
+      0.0,
+      0.03
+    ],
+    "max": [
+      1.0,
+      0.17
+    ],
+    "spacing": 0.005,
+    "initial_velocity": [
+      0.0,
+      0.0
+    ]
+  },
+  "neighbors": {
+    "type": "spatial_hash",
+    "support_radius": 0.013
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 8000.0
+    }
+  },
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 8000.0,
+    "dfsph": {
+      "density_diffusion": { "enable": false },
+      "free_surface_stabilization": { "enable": false }
+    }
+  },
+  "backend": {
+    "type": "numba_cpu"
+  },
+  "forces": {
+    "gravity": [
+      0.003,
+      0.0
+    ],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.12
+    },
+    "xsph": {
+      "enable": true,
+      "eps": 0.05
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.18,
+    "dt_min": 2e-06,
+    "dt_max": 0.0001,
+    "dt_fixed": 0.0001,
+    "steps": 1200,
+    "log_every": 20
+  },
+  "export": {
+    "csv": {
+      "enable": false,
+      "every": 100,
+      "dir": "out/csv"
+    },
+    "vtk": {
+      "enable": false,
+      "every": 100,
+      "dir": "out/vtk"
+    }
+  }
+}

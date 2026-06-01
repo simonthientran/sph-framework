@@ -1,0 +1,78 @@
+{
+  "meta": {
+    "name": "Benchmark: 3D Thin Pipe (Hagen-Poiseuille)",
+    "version": 1,
+    "dimensions": 3,
+    "description": "3D thin periodic pipe, diameter 0.05m, length 0.2m. Body force [0.01, 0, 0]. Analytical vmax = f*R^2/(4*nu) for cylinder. With R=0.02, f=0.01, nu=0.1: vmax=1e-5 m/s.",
+    "scene_type": "periodic_pipe"
+  },
+
+  "fluids": [
+    {
+      "type": "box",
+      "name": "fluid",
+      "spacing": 0.02,
+      "min": [0.0, 0.04, 0.04],
+      "max": [0.2, 0.18, 0.18],
+      "initial_velocity": [0.0, 0.0, 0.0]
+    }
+  ],
+
+  "domain": {
+    "min": [0.0, 0.0, 0.0],
+    "max": [0.2, 0.2, 0.2],
+    "periodic_x": true,
+    "boundary_layers": 3
+  },
+
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 100000.0
+    }
+  },
+
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 100000.0,
+    "dfsph": {
+      "eta_cd": 0.01,
+      "eta_df": 0.1,
+      "max_iter_cd": 100,
+      "max_iter_df": 100,
+      "density_diffusion": {
+        "enable": false
+      },
+      "free_surface_stabilization": {
+        "enable": false
+      }
+    }
+  },
+
+  "forces": {
+    "gravity": [0.01, 0.0, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.1
+    }
+  },
+
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.04
+  },
+
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1.0e-6,
+    "dt_max": 0.0003,
+    "steps": 5000
+  },
+
+  "export": {
+    "csv": { "enable": false },
+    "vtk": { "enable": false }
+  }
+}

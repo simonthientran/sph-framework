@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "name": "pipe_flow_3d",
+    "version": 2,
+    "dimensions": 3,
+    "description": "3D square-duct Poiseuille flow. Periodic in x, walls at y/z. DFSPH for incompressible internal flow.",
+    "use": "internal_flow_benchmark",
+    "scene_type": "internal_flow",
+    "preferred_overlay": "velocity"
+  },
+  "domain": {
+    "type": "box",
+    "min": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "max": [
+      0.4,
+      0.4,
+      0.4
+    ],
+    "boundary_layers": 3,
+    "periodic_x": true
+  },
+  "fluid": {
+    "type": "block",
+    "min": [
+      0.0,
+      0.05,
+      0.05
+    ],
+    "max": [
+      0.4,
+      0.35,
+      0.35
+    ],
+    "spacing": 0.02,
+    "initial_velocity": [
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.052
+  },
+  "materials": [
+    {
+      "id": "Fluid",
+      "density0": 1000.0,
+      "viscosity": 0.12,
+      "xsph": 0.0,
+      "colorField": "velocity",
+      "colorMapType": "jet",
+      "renderMinValue": 0.0,
+      "renderMaxValue": 0.5
+    }
+  ],
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 8000.0
+    }
+  },
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 8000.0,
+    "dfsph": {
+      "density_diffusion": { "enable": false },
+      "free_surface_stabilization": { "enable": false }
+    }
+  },
+  "backend": {
+    "type": "numba_cpu"
+  },
+  "forces": {
+    "gravity": [
+      0.003,
+      0.0,
+      0.0
+    ],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.12
+    },
+    "xsph": {
+      "enable": false
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.18,
+    "dt_min": 2e-06,
+    "dt_max": 0.0001,
+    "dt_fixed": 0.0001,
+    "steps": 200
+  },
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": false
+    }
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "name": "Pipe 3D STL Demo",
+    "version": 1,
+    "dimensions": 3,
+    "description": "Fluid filling a vertical cylindrical pipe (pipe.stl). Gravity acts along the pipe axis. Fluid falls and impacts the bottom cap. Recommended color mode: Speed.",
+    "recommended_color": "Speed"
+  },
+  "fluids": [
+    {
+      "type": "box",
+      "name": "fluid_column",
+      "spacing": 0.025,
+      "min": [
+        0.36,
+        0.36,
+        0.52
+      ],
+      "max": [
+        0.64,
+        0.64,
+        0.93
+      ],
+      "initial_velocity": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "type": "stl",
+      "file": "../../assets/pipe.stl",
+      "sampling": "poisson",
+      "n_layers": 2,
+      "translation": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "scale": [
+        2.0,
+        2.0,
+        1.0
+      ]
+    }
+  ],
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.08
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 5000.0
+    },
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    }
+  },
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 5000.0,
+    "eta_cd": 0.05,
+    "max_iter_cd": 50,
+    "density_diffusion": {
+      "enable": true,
+      "delta": 0.1,
+      "floor_ratio": 0.6
+    },
+    "free_surface_stabilization": {
+      "enable": true,
+      "mode": "density_shift",
+      "strength": 0.4,
+      "target_ratio": 0.88,
+      "max_raise_ratio": 0.12
+    }
+  },
+  "forces": {
+    "gravity": [
+      0.0,
+      0.0,
+      -9.81
+    ],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    },
+    "xsph": {
+      "enable": true,
+      "eps": 0.05
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1e-05,
+    "dt_max": 0.002,
+    "steps": 400
+  },
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": false
+    }
+  }
+}

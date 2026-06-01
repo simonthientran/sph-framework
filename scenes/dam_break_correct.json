@@ -1,0 +1,57 @@
+{
+  "Configuration": {
+    "sim2D": false,
+    "particleRadius": 0.015,
+    "timeStepSize": 0.0005,
+    "simulationMethod": 4,
+    "gravitation": [0.0, -9.81, 0.0],
+    "cflMethod": 1,
+    "cflFactor": 0.4,
+    "cflMaxTimeStepSize": 0.002,
+    "enableDensityDiffusion": true,
+    "densityFloorRatio": 0.6,
+    "DFSPH": {
+      "minIterations": 2,
+      "maxIterations": 50,
+      "maxError": 0.05,
+      "maxIterationsV": 50,
+      "maxErrorV": 0.1,
+      "enableDivergenceSolver": true
+    }
+  },
+
+  "RigidBodies": [
+    {
+      "geometryFile": "assets/box.stl",
+      "translation": [0.5, 0.3, 0.2],
+      "scale": [1.0, 0.6, 0.4],
+      "isWall": true,
+      "denseMode": 0,
+      "n_layers": 3
+    }
+  ],
+
+  "FluidBlocks": [
+    {
+      "start": [0.02, 0.02, 0.02],
+      "end": [0.30, 0.50, 0.38],
+      "initialVelocity": [0.0, 0.0, 0.0]
+    }
+  ],
+
+  "Materials": [
+    {
+      "id": "Fluid",
+      "density0": 1000.0,
+      "viscosity": 0.001,
+      "viscosityMethod": 1,
+      "xsph": 0.05
+    }
+  ],
+
+  "Exporter": {
+    "vtk": true,
+    "output_dir": "out/dam_break_correct",
+    "vtk_interval": 5
+  }
+}

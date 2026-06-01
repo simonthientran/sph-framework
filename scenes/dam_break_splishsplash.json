@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "name": "Dam Break SPlisHSPlasH-style",
+    "version": 1,
+    "dimensions": 3,
+    "description": "3D dam break matching SPlisHSPlasH default setup: 0.35x0.45x0.39 fluid column, 1x0.6x0.4 box container, DFSPH with free-surface stabilization, CFL 0.4, gravity -9.81.",
+    "scene_type": "free_surface"
+  },
+
+  "fluids": [
+    {
+      "type": "box",
+      "name": "dam_column",
+      "spacing": 0.025,
+      "min": [0.01, 0.01, 0.05],
+      "max": [0.35, 0.45, 0.35],
+      "initial_velocity": [0.0, 0.0, 0.0]
+    }
+  ],
+
+  "boundaries": [
+    {
+      "type": "stl",
+      "file": "../assets/box.stl",
+      "sampling": "poisson",
+      "n_layers": 2,
+      "translation": [0.5, 0.3, 0.2],
+      "scale": [1.0, 0.6, 0.4]
+    }
+  ],
+
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.09
+  },
+
+  "materials": [
+    {
+      "id": "Fluid",
+      "density0": 1000.0,
+      "viscosity": 0.001,
+      "xsph": 0.0,
+      "colorField": "velocity",
+      "colorMapType": "jet",
+      "renderMinValue": 0.0,
+      "renderMaxValue": 3.0
+    }
+  ],
+
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 5000.0
+    }
+  },
+
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 5000.0,
+    "dfsph": {
+      "eta_cd": 0.05,
+      "max_iter_cd": 50,
+      "density_diffusion": {
+        "enable": true,
+        "delta": 0.1,
+        "floor_ratio": 0.60
+      },
+      "free_surface_stabilization": {
+        "enable": true,
+        "mode": "density_shift",
+        "strength": 0.4,
+        "target_ratio": 0.88,
+        "max_raise_ratio": 0.12
+      }
+    }
+  },
+
+  "forces": {
+    "gravity": [0.0, -9.81, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    },
+    "xsph": {
+      "enable": false
+    }
+  },
+
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1.0e-5,
+    "dt_max": 0.001,
+    "steps": 500
+  },
+
+  "export": {
+    "csv": { "enable": false },
+    "vtk": { "enable": false }
+  }
+}

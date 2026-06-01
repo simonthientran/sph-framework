@@ -1,0 +1,64 @@
+{
+  "meta": {
+    "name": "basin_3d",
+    "version": 2,
+    "dimensions": 3,
+    "description": "3D wide basin collapse. Fluid column collapses laterally under gravity in a wider container than dam_break_3d. WCSPH with domain boundary for correct free-surface dynamics.",
+    "use": "free_surface_demo",
+    "scene_type": "free_surface",
+    "recommended_color": "Speed"
+  },
+  "domain": {
+    "type": "box",
+    "min": [0.0, 0.0, 0.0],
+    "max": [1.2, 0.6, 0.5],
+    "boundary_layers": 2
+  },
+  "fluids": [
+    {
+      "type": "box",
+      "name": "dam_column",
+      "spacing": 0.025,
+      "min": [0.05, 0.05, 0.05],
+      "max": [0.40, 0.50, 0.45],
+      "initial_velocity": [0.0, 0.0, 0.0]
+    }
+  ],
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.09
+  },
+  "materials": [
+    {
+      "id": "Fluid",
+      "density0": 1000.0,
+      "viscosity": 0.0,
+      "xsph": 0.0,
+      "colorField": "velocity",
+      "colorMapType": "jet",
+      "renderMinValue": 0.0,
+      "renderMaxValue": 3.0
+    }
+  ],
+  "material": {
+    "rho0": 1000.0
+  },
+  "solver": {
+    "type": "wcsph",
+    "eos_k": 10000.0
+  },
+  "forces": {
+    "gravity": [0.0, -9.81, 0.0]
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.2,
+    "dt_min": 1e-05,
+    "dt_max": 0.001,
+    "steps": 600
+  },
+  "export": {
+    "csv": { "enable": false },
+    "vtk": { "enable": false }
+  }
+}

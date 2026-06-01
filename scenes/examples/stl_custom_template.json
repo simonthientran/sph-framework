@@ -1,0 +1,116 @@
+{
+  "meta": {
+    "name": "Custom STL Template",
+    "version": 1,
+    "dimensions": 3,
+    "description": "Template for loading your own STL container. Copy this file, update the file path, adjust translation/scale to match your geometry, then set fluid min/max to place fluid inside the container.",
+    "how_to_use": [
+      "1. Copy this file and rename it (e.g. my_scene.json).",
+      "2. Set boundaries[0].file to the path of your STL file (absolute, or relative to this JSON file).",
+      "3. Set translation to the center point of your container in simulation space.",
+      "4. Set scale to [width, height, depth] in metres (scales the STL from its native unit size).",
+      "5. Set fluids[0].min/max to a block of particles INSIDE the container (leave a gap >= spacing from the walls).",
+      "6. Adjust forces.gravity direction to match your intended simulation axis.",
+      "7. Open the scene in sph.app.app and press Run."
+    ]
+  },
+  "fluids": [
+    {
+      "type": "box",
+      "name": "fluid",
+      "spacing": 0.025,
+      "min": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "max": [
+        0.45,
+        0.45,
+        0.45
+      ],
+      "initial_velocity": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "type": "stl",
+      "file": "../../assets/box.stl",
+      "sampling": "poisson",
+      "n_layers": 2,
+      "translation": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.08
+  },
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 5000.0
+    }
+  },
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 5000.0,
+    "eta_cd": 0.05,
+    "max_iter_cd": 50,
+    "density_diffusion": {
+      "enable": true,
+      "delta": 0.1,
+      "floor_ratio": 0.6
+    },
+    "free_surface_stabilization": {
+      "enable": true,
+      "mode": "density_shift",
+      "strength": 0.4,
+      "target_ratio": 0.88,
+      "max_raise_ratio": 0.12
+    }
+  },
+  "forces": {
+    "gravity": [
+      0.0,
+      -9.81,
+      0.0
+    ],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    },
+    "xsph": {
+      "enable": true,
+      "eps": 0.05
+    }
+  },
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1e-05,
+    "dt_max": 0.002,
+    "steps": 500
+  },
+  "export": {
+    "csv": {
+      "enable": false
+    },
+    "vtk": {
+      "enable": false
+    }
+  }
+}
