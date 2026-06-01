@@ -499,9 +499,10 @@ def cpu_only_validate(
     Returns a dict with ``passed`` (bool) and human-readable ``summary`` (str).
     """
     from sph.core.simulation import SimulationRunner  # lazy — avoids circular import
+    from sph.core.backends import NumbaCPUBackend
 
     scene_path = Path(scene_path)
-    runner = SimulationRunner(scene_path, backend_name=cpu_backend)
+    runner = SimulationRunner(scene_path, backend_factory=NumbaCPUBackend)
     last_rt = None
 
     for _ in range(steps):

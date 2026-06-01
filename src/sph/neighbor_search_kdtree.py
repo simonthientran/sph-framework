@@ -18,7 +18,13 @@ class KDTreeNeighborSearch:
     Much faster than custom Python implementations due to C backend.
     """
 
-    def __init__(self, support_radius: float, dim: int = 2, periodic_x: tuple[float, float] | None = None):
+    def __init__(
+        self,
+        support_radius: float,
+        dim: int = 2,
+        periodic_x: tuple[float, float] | None = None,
+        periodic_z: tuple[float, float] | None = None,
+    ):
         """
         Initialize neighbor search.
 
@@ -26,10 +32,12 @@ class KDTreeNeighborSearch:
             support_radius: Search radius (2h for cubic spline)
             dim: Spatial dimension
             periodic_x: Optional tuple (x_min, x_max) for periodic BC in x-direction
+            periodic_z: Optional tuple (z_min, z_max) for periodic BC in z-direction (3D only)
         """
         self.support_radius = float(support_radius)
         self.dim = dim
         self.periodic_x = periodic_x
+        self.periodic_z = periodic_z if dim == 3 else None
 
     def build_neighbor_pairs(
         self,
@@ -49,16 +57,26 @@ class KDTreeNeighborSearch:
         if n_fluid == 0:
             return NeighborPairs.empty(self.dim)
 
-        # For periodic x, use cKDTree with boxsize so that query_pairs and
-        # query_ball_tree respect the periodic metric in x.
-        if self.periodic_x is not None:
-            x_min, x_max = self.periodic_x
-            L_x = x_max - x_min
-            # Positions must be in [0, boxsize); clip floating-point edge cases
+        # Build cKDTree with periodic boxsize for any periodic directions.
+        has_periodic = self.periodic_x is not None or self.periodic_z is not None
+        if has_periodic:
             fpos = fluid_positions.copy()
-            fpos[:, 0] = (fpos[:, 0] - x_min) % L_x
-            # Large y-boxsize disables y-periodicity
-            boxsize = np.array([L_x, 1e30], dtype=np.float64)
+            if self.dim == 3:
+                # Build boxsize: [L_x, large, L_z] for x+z periodic (or subset)
+                L_x = (self.periodic_x[1] - self.periodic_x[0]) if self.periodic_x is not None else 1e30
+                L_z = (self.periodic_z[1] - self.periodic_z[0]) if self.periodic_z is not None else 1e30
+                boxsize = np.array([L_x, 1e30, L_z], dtype=np.float64)
+                if self.periodic_x is not None:
+                    x_min = self.periodic_x[0]
+                    fpos[:, 0] = (fpos[:, 0] - x_min) % L_x
+                if self.periodic_z is not None:
+                    z_min = self.periodic_z[0]
+                    fpos[:, 2] = (fpos[:, 2] - z_min) % L_z
+            else:
+                x_min, x_max = self.periodic_x
+                L_x = x_max - x_min
+                fpos[:, 0] = (fpos[:, 0] - x_min) % L_x
+                boxsize = np.array([L_x, 1e30], dtype=np.float64)
             tree = cKDTree(fpos, boxsize=boxsize)
         else:
             fpos = fluid_positions
@@ -78,9 +96,12 @@ class KDTreeNeighborSearch:
         idx_i_fb = np.zeros(0, dtype=np.int32)
         idx_j_fb = np.zeros(0, dtype=np.int32)
         if boundary_positions is not None and len(boundary_positions) > 0:
-            if self.periodic_x is not None:
+            if has_periodic:
                 bpos = boundary_positions.copy()
-                bpos[:, 0] = (bpos[:, 0] - x_min) % L_x
+                if self.periodic_x is not None:
+                    bpos[:, 0] = (bpos[:, 0] - self.periodic_x[0]) % (self.periodic_x[1] - self.periodic_x[0])
+                if self.periodic_z is not None and self.dim == 3:
+                    bpos[:, 2] = (bpos[:, 2] - self.periodic_z[0]) % (self.periodic_z[1] - self.periodic_z[0])
                 btree = cKDTree(bpos, boxsize=boxsize)
             else:
                 bpos = boundary_positions
@@ -101,7 +122,9 @@ class KDTreeNeighborSearch:
         if idx_i_ff.size > 0:
             r_ff = fluid_positions[idx_i_ff] - fluid_positions[idx_j_ff]
             if self.periodic_x is not None:
-                r_ff[:, 0] -= self._wrap_component(r_ff[:, 0])
+                r_ff[:, 0] -= self._wrap_component(r_ff[:, 0], self.periodic_x)
+            if self.periodic_z is not None and self.dim == 3:
+                r_ff[:, 2] -= self._wrap_component(r_ff[:, 2], self.periodic_z)
             dist_ff = np.linalg.norm(r_ff, axis=1)
             # Filter out any pairs that were actually beyond support after wrapping
             valid = dist_ff < self.support_radius
@@ -117,7 +140,9 @@ class KDTreeNeighborSearch:
             assert boundary_positions is not None
             r_fb = fluid_positions[idx_i_fb] - boundary_positions[idx_j_fb]
             if self.periodic_x is not None:
-                r_fb[:, 0] -= self._wrap_component(r_fb[:, 0])
+                r_fb[:, 0] -= self._wrap_component(r_fb[:, 0], self.periodic_x)
+            if self.periodic_z is not None and self.dim == 3:
+                r_fb[:, 2] -= self._wrap_component(r_fb[:, 2], self.periodic_z)
             dist_fb = np.linalg.norm(r_fb, axis=1)
             valid = dist_fb < self.support_radius
             idx_i_fb = idx_i_fb[valid]
@@ -139,10 +164,7 @@ class KDTreeNeighborSearch:
             dist_fb,
         )
 
-    def _wrap_component(self, delta: np.ndarray) -> np.ndarray:
-        """Apply minimum-image convention for periodic x direction."""
-        if self.periodic_x is None:
-            return delta
-        x_min, x_max = self.periodic_x
-        L_x = x_max - x_min
-        return L_x * np.round(delta / L_x)
+    def _wrap_component(self, delta: np.ndarray, bounds: tuple[float, float]) -> np.ndarray:
+        """Apply minimum-image convention for a periodic direction."""
+        L = bounds[1] - bounds[0]
+        return L * np.round(delta / L)

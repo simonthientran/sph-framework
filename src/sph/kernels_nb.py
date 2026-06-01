@@ -21,13 +21,22 @@ from numba import njit, prange
 # ──────────────────────────────────────────────────────── kernel evaluation
 
 @njit(cache=True)
-def cubic_spline_W_batch(dist: np.ndarray, h: float) -> np.ndarray:
+def _cubic_spline_alpha(h: float, dim: int) -> float:
+    if dim == 3:
+        return 1.0 / (np.pi * h * h * h)
+    else:
+        return 10.0 / (7.0 * np.pi * h * h)
+
+
+@njit(cache=True)
+def cubic_spline_W_batch(dist: np.ndarray, h: float, dim: int = 2) -> np.ndarray:
     """
     Evaluate W(dist, h) for all pairs.
 
     Returns array of shape (N,), matching kernel.py W() exactly.
+    dim=2: alpha = 10/(7 π h²); dim=3: alpha = 1/(π h³).
     """
-    alpha = 10.0 / (7.0 * np.pi * h * h)
+    alpha = _cubic_spline_alpha(h, dim)
     n = len(dist)
     w = np.zeros(n)
     for k in range(n):
@@ -43,17 +52,19 @@ def cubic_spline_W_batch(dist: np.ndarray, h: float) -> np.ndarray:
 @njit(cache=True)
 def cubic_spline_gradW_batch(r_ij: np.ndarray,
                               dist: np.ndarray,
-                              h: float) -> np.ndarray:
+                              h: float,
+                              dim: int = 2) -> np.ndarray:
     """
     Evaluate ∇W(r_ij, h) for all pairs.
 
-    r_ij : (N, 2)  displacement vectors r_i - r_j
-    dist : (N,)    distances ||r_ij||
-    Returns grad_W : (N, 2), matching kernel.py grad_W() exactly.
+    r_ij : (N, dim)  displacement vectors r_i - r_j
+    dist : (N,)      distances ||r_ij||
+    Returns grad_W : (N, dim).
+    dim=2: alpha = 10/(7 π h²); dim=3: alpha = 1/(π h³).
     """
-    alpha = 10.0 / (7.0 * np.pi * h * h)
+    alpha = _cubic_spline_alpha(h, dim)
     n = len(dist)
-    gw = np.zeros((n, 2))
+    gw = np.zeros_like(r_ij)
     for k in range(n):
         d = dist[k]
         if d < 1e-12:
@@ -66,10 +77,9 @@ def cubic_spline_gradW_batch(r_ij: np.ndarray,
             dw_dq = alpha * (-0.75 * t * t)
         else:
             continue
-        # grad_W = (dW/dq / h) * (r / |r|)
         scale = dw_dq / (h * d)
-        gw[k, 0] = scale * r_ij[k, 0]
-        gw[k, 1] = scale * r_ij[k, 1]
+        for s in range(dim):
+            gw[k, s] = scale * r_ij[k, s]
     return gw
 
 
@@ -139,10 +149,11 @@ def scatter_add_2d(arr: np.ndarray,
     Replaces: np.add.at(arr, idx, vectors)
     Single-sided (idx contains all directions already).
     """
+    n_comp = vectors.shape[1]
     for k in range(len(idx)):
         i = idx[k]
-        arr[i, 0] += vectors[k, 0]
-        arr[i, 1] += vectors[k, 1]
+        for d in range(n_comp):
+            arr[i, d] += vectors[k, d]
 
 
 @njit(cache=True)

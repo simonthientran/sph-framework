@@ -603,22 +603,17 @@ class DFSPHTimeStep(TimeStep):
         rho_den = np.zeros(boundary.n)
         scatter_add_1d(rho_num, j_boundary, fluid.densities[idx_i_b] * W)
         scatter_add_1d(rho_den, j_boundary, W)
-        prior = 0.25
-        rho_num += prior * boundary.rho0
-        rho_den += prior
         valid_rho = rho_den > 1e-6
         boundary.densities[valid_rho] = rho_num[valid_rho] / rho_den[valid_rho]
         boundary.densities[~valid_rho] = boundary.rho0
-        boundary.pressures[valid_rho] = self._pressure_from_density(
-            boundary.densities[valid_rho], boundary.rho0
+        boundary.pressures[:] = self._pressure_from_density(
+            boundary.densities, boundary.rho0
         )
-        boundary.pressures[~valid_rho] = 0.0
 
         v_num = np.zeros((boundary.n, self.kernel.dim))
         v_den = np.zeros(boundary.n)
         scatter_add_2d(v_num, j_boundary, fluid.velocities[idx_i_b] * W[:, np.newaxis])
         scatter_add_1d(v_den, j_boundary, W)
-        v_den += prior
         valid = v_den > 1e-6
         boundary.velocities[valid] = -v_num[valid] / v_den[valid, np.newaxis]
         boundary.velocities[~valid] = 0.0
@@ -638,8 +633,7 @@ class DFSPHTimeStep(TimeStep):
             v_ij = fluid.velocities[pairs.ff_i] - fluid.velocities[pairs.ff_j]
             rdgw = np.sum(pairs.ff_r * grad_ff, axis=1)
             denom = pairs.ff_dist**2 + 0.01 * h**2
-            factor = 2.0 * (fluid.dim + 2.0)
-            coeff = factor * self.nu * fluid.mass / fluid.rho0 * rdgw / denom
+            coeff = 3.0 * self.nu * fluid.mass / fluid.rho0 * rdgw / denom
             force = coeff[:, np.newaxis] * v_ij
             accumulate_force(acc, pairs.ff_i, pairs.ff_j, force)
 
@@ -648,8 +642,7 @@ class DFSPHTimeStep(TimeStep):
             v_diff = fluid.velocities[pairs.fb_i] - boundary.velocities[pairs.fb_j]
             rdgw = np.sum(pairs.fb_r * grad_fb, axis=1)
             denom = pairs.fb_dist**2 + 0.01 * h**2
-            factor = 2.0 * (fluid.dim + 2.0)
-            coeff = factor * self.nu * boundary.mass / boundary.rho0 * rdgw / denom
+            coeff = 3.0 * self.nu * boundary.mass / boundary.rho0 * rdgw / denom
             force = coeff[:, np.newaxis] * v_diff
             scatter_add_2d(acc, pairs.fb_i, force)
 
@@ -748,7 +741,8 @@ class DFSPHTimeStep(TimeStep):
 
             rho_star = fluid.densities.copy()
             if drho.size:
-                accumulate_difference(rho_star, i_u, j_u, drho)
+                scatter_add_1d(rho_star, i_u, drho)
+                scatter_add_1d(rho_star, j_u, drho)
             if boundary_active:
                 vel_diff_fb = fluid.velocities[pairs.fb_i] - boundary_vel
                 contrib_fb = dt * psi_fb * np.sum(vel_diff_fb * gw_fb, axis=1)
@@ -849,7 +843,8 @@ class DFSPHTimeStep(TimeStep):
 
             drho_dt = np.zeros(fluid.n)
             if contrib.size:
-                accumulate_difference(drho_dt, i_u, j_u, contrib)
+                scatter_add_1d(drho_dt, i_u, contrib)
+                scatter_add_1d(drho_dt, j_u, contrib)
             if boundary_active:
                 vel_diff_fb = fluid.velocities[pairs.fb_i] - boundary_vel
                 contrib_fb = psi_fb * np.sum(vel_diff_fb * gw_fb, axis=1)
@@ -1191,6 +1186,11 @@ class DFSPHTimeStep(TimeStep):
         """Wrap particles in x-direction for periodic BC."""
         L_x = x_max - x_min
         fluid.positions[:, 0] = x_min + np.mod(fluid.positions[:, 0] - x_min, L_x)
+
+    def apply_periodic_bc_z(self, fluid: FluidModel, z_min: float, z_max: float):
+        """Wrap particles in z-direction for periodic BC."""
+        L_z = z_max - z_min
+        fluid.positions[:, 2] = z_min + np.mod(fluid.positions[:, 2] - z_min, L_z)
 
     def _pressure_from_density(self, density: np.ndarray, rho0: float) -> np.ndarray:
         rho_ratio = density / rho0

@@ -68,17 +68,31 @@ class Simulator:
             domain_max = np.array(domain_cfg["max"], dtype=np.float64)
             self.x_min = domain_min[0]
             self.x_max = domain_max[0]
-            periodic_x = (self.x_min, self.x_max)
+            periodic_x = (self.x_min, self.x_max) if domain_cfg.get("periodic_x", False) else None
         else:
             self.x_min = None
             self.x_max = None
             periodic_x = None
 
+        # z-periodic BC (3D only)
+        if self.dim == 3 and domain_cfg.get("periodic_z", False) and "min" in domain_cfg:
+            fluid_cfg = self.scene["fluid"]
+            z_min_f = float(np.array(fluid_cfg["min"], dtype=np.float64)[2])
+            z_max_f = float(np.array(fluid_cfg["max"], dtype=np.float64)[2])
+            self.z_min: float | None = z_min_f
+            self.z_max: float | None = z_max_f
+            periodic_z: tuple[float, float] | None = (z_min_f, z_max_f)
+        else:
+            self.z_min = None
+            self.z_max = None
+            periodic_z = None
+
         # Create neighbor search with periodic BC support
         self.neighbor_search = KDTreeNeighborSearch(
             support_radius=self.support_radius,
             dim=self.dim,
-            periodic_x=periodic_x
+            periodic_x=periodic_x,
+            periodic_z=periodic_z,
         )
 
         # Trigger Numba JIT compilation before first simulation step
@@ -105,7 +119,10 @@ class Simulator:
     def _load_scene(self) -> dict:
         """Load scene configuration from JSON file."""
         with open(self.scene_path, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+        if "fluids" in data and "fluid" not in data:
+            data["fluid"] = data["fluids"][0]
+        return data
 
     def _compute_correct_mass(self) -> float:
         """
@@ -124,14 +141,21 @@ class Simulator:
         kernel = CubicSplineKernel(h=self.h, dim=self.dim)
         W_sum = 0.0
 
-        for ix in range(-n_cells, n_cells + 1):
-            for iy in range(-n_cells, n_cells + 1):
-                x = ix * self.spacing
-                y = iy * self.spacing
-                r = np.sqrt(x**2 + y**2)
-
-                if r <= support:
-                    W_sum += kernel.W(r)
+        if self.dim == 3:
+            for ix in range(-n_cells, n_cells + 1):
+                for iy in range(-n_cells, n_cells + 1):
+                    for iz in range(-n_cells, n_cells + 1):
+                        r = np.sqrt((ix * self.spacing)**2 + (iy * self.spacing)**2 + (iz * self.spacing)**2)
+                        if r <= support:
+                            W_sum += kernel.W(r)
+        else:
+            for ix in range(-n_cells, n_cells + 1):
+                for iy in range(-n_cells, n_cells + 1):
+                    x = ix * self.spacing
+                    y = iy * self.spacing
+                    r = np.sqrt(x**2 + y**2)
+                    if r <= support:
+                        W_sum += kernel.W(r)
 
         # Correct mass: m = rho0 / sum(W)
         return self.rho0 / W_sum
@@ -150,7 +174,11 @@ class Simulator:
             xx, yy = np.meshgrid(x, y, indexing='ij')
             fluid_positions = np.column_stack([xx.ravel(), yy.ravel()])
         else:
-            raise NotImplementedError("3D not yet implemented")
+            x = np.arange(fluid_min[0], fluid_max[0], self.spacing)
+            y = np.arange(fluid_min[1], fluid_max[1], self.spacing)
+            z = np.arange(fluid_min[2], fluid_max[2], self.spacing)
+            xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
+            fluid_positions = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
 
         n_fluid = len(fluid_positions)
 
@@ -207,18 +235,62 @@ class Simulator:
             x_lo = float(fluid_min[0])
             x_hi = float(fluid_max[0])
 
-        x_vals = np.arange(x_lo, x_hi + 0.5 * self.spacing, self.spacing)
+        # x-periodic: avoid duplicate at x_hi (it wraps to x_lo)
+        x_periodic = bool(domain_cfg.get("periodic_x", False)) if domain_cfg else False
+        if x_periodic:
+            x_vals = np.arange(x_lo, x_hi, self.spacing)
+        else:
+            x_vals = np.arange(x_lo, x_hi + 0.5 * self.spacing, self.spacing)
+
+        periodic_z = bool(domain_cfg.get("periodic_z", False)) if domain_cfg else False
 
         positions: list[list[float]] = []
-        for layer in range(n_layers):
-            # Place layers just outside the *fluid* y-extent so they are
-            # always within support_radius of the nearest fluid particles.
-            offset = (layer + 0.5) * self.spacing
-            y_bottom = float(fluid_min[1]) - offset
-            y_top = float(fluid_max[1]) + offset
-            for x in x_vals:
-                positions.append([x, y_bottom])
-                positions.append([x, y_top])
+        if self.dim == 3:
+            # Last actual particle positions (fluid_max is exclusive)
+            y_last = float(fluid_max[1]) - self.spacing
+            z_last = float(fluid_max[2]) - self.spacing
+
+            # z span for y-wall particles: span the actual fluid z extent only
+            if periodic_z:
+                z_vals = np.arange(float(fluid_min[2]), float(fluid_max[2]), self.spacing)
+            else:
+                z_lo = float(fluid_min[2]) - n_layers * self.spacing
+                z_hi = z_last + n_layers * self.spacing
+                z_vals = np.arange(z_lo, z_hi + 0.5 * self.spacing, self.spacing)
+
+            for layer in range(n_layers):
+                # Full-spacing offset from last/first particle position
+                offset = (layer + 1) * self.spacing
+                y_bottom = float(fluid_min[1]) - offset   # below first particle
+                y_top = y_last + offset                     # above last particle
+                for x in x_vals:
+                    for z in z_vals:
+                        positions.append([x, y_bottom, z])
+                        positions.append([x, y_top, z])
+
+            if not periodic_z:
+                # z walls only when z is not periodic
+                y_lo = float(fluid_min[1]) - n_layers * self.spacing
+                y_hi = y_last + n_layers * self.spacing
+                y_vals_full = np.arange(y_lo, y_hi + 0.5 * self.spacing, self.spacing)
+                for layer in range(n_layers):
+                    offset = (layer + 1) * self.spacing
+                    z_front = float(fluid_min[2]) - offset
+                    z_back = z_last + offset
+                    for x in x_vals:
+                        for y in y_vals_full:
+                            positions.append([x, y, z_front])
+                            positions.append([x, y, z_back])
+        else:
+            y_last_2d = float(fluid_max[1]) - self.spacing
+            for layer in range(n_layers):
+                # Full-spacing offset from first/last fluid particle positions
+                offset = (layer + 1) * self.spacing
+                y_bottom = float(fluid_min[1]) - offset
+                y_top = y_last_2d + offset
+                for x in x_vals:
+                    positions.append([x, y_bottom])
+                    positions.append([x, y_top])
 
         if not positions:
             return None
@@ -389,9 +461,11 @@ class Simulator:
         if self.enable_xsph:
             self._apply_xsph()
 
-        # Apply periodic boundary condition in x-direction (for Poiseuille flow)
+        # Apply periodic boundary conditions
         if self.x_min is not None and self.x_max is not None:
             self.time_step.apply_periodic_bc_x(self.fluid, self.x_min, self.x_max)
+        if self.z_min is not None and self.z_max is not None:
+            self.time_step.apply_periodic_bc_z(self.fluid, self.z_min, self.z_max)
 
         self.current_step += 1
 

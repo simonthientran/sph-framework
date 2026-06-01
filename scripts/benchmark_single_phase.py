@@ -33,7 +33,7 @@ def run_poiseuille_benchmark(n_steps: int = 3000, verbose: bool = True) -> bool:
         print(f"ERROR: scene not found: {scene_path}")
         return False
 
-    runner = SimulationRunner(scene_path, backend_name="numba_cpu")
+    runner = SimulationRunner(scene_path)
     fl = runner.backend.sim.fluid
 
     # ── Scene parameters ──────────────────────────────────────────────────────

@@ -22,6 +22,7 @@
     "min": [0.0, 0.0, 0.0],
     "max": [0.2, 0.2, 0.2],
     "periodic_x": true,
+    "periodic_z": true,
     "boundary_layers": 2
   },
 
