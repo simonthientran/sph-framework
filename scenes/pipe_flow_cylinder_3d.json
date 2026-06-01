@@ -53,8 +53,8 @@
       "viscosity_factor": 2.0,
       "eta_cd": 0.01,
       "eta_df": 0.1,
-      "max_iter_cd": 100,
-      "max_iter_df": 100,
+      "max_iter_cd": 10,
+      "max_iter_df": 10,
       "density_diffusion": {
         "enable": false,
         "delta": 0.1,
