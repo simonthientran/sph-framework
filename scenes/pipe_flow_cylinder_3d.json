@@ -1,9 +1,9 @@
 {
   "meta": {
-    "name": "3D Cylinder Pipe Flow (Hagen-Poiseuille)",
-    "version": 1,
+    "name": "3D Cylinder Pipe Flow (inlet-driven, water)",
+    "version": 2,
     "dimensions": 3,
-    "description": "Hagen-Poiseuille flow in a cylinder along x. Analytical: vmax = f*R^2/(4*nu) = 0.003*0.07^2/(4*0.12) = 3.0625e-5 m/s. Cylinder radius R=0.07m (=7x spacing), periodic in x.",
+    "description": "Inlet-driven pipe flow: nu=0.001 (water), inlet_velocity=0.5 m/s, no body force. Open domain (periodic_x disabled). Outlet removes at x>0.19, inlet injects fresh layer at x=0.01.",
     "scene_type": "cylinder_pipe"
   },
 
@@ -16,14 +16,14 @@
       "axis_max": 0.2,
       "center": [0.1, 0.1],
       "radius": 0.07,
-      "initial_velocity": [0.0, 0.0, 0.0]
+      "initial_velocity": [0.5, 0.0, 0.0]
     }
   ],
 
   "domain": {
     "min": [0.0, 0.0, 0.0],
     "max": [0.2, 0.2, 0.2],
-    "periodic_x": true,
+    "periodic_x": false,
     "cylinder_wall": {
       "center": [0.1, 0.1],
       "radius": 0.07,
@@ -32,7 +32,9 @@
     "inlet_outlet": {
       "enable": true,
       "outlet_x": 0.19,
-      "inlet_x": 0.01
+      "inlet_x": 0.01,
+      "inlet_velocity": 0.5,
+      "outlet_pressure": 100000.0
     }
   },
 
@@ -65,10 +67,10 @@
   },
 
   "forces": {
-    "gravity": [0.003, 0.0, 0.0],
+    "gravity": [0.0, 0.0, 0.0],
     "viscosity": {
       "enable": true,
-      "nu": 0.12
+      "nu": 0.001
     },
     "xsph": {
       "enable": false
@@ -85,7 +87,7 @@
     "cfl": 0.4,
     "dt_min": 1.0e-6,
     "dt_max": 0.0002,
-    "steps": 3000
+    "steps": 500
   },
 
   "export": {

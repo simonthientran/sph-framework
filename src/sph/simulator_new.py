@@ -66,9 +66,14 @@ class Simulator:
         if "min" in domain_cfg and "max" in domain_cfg:
             domain_min = np.array(domain_cfg["min"], dtype=np.float64)
             domain_max = np.array(domain_cfg["max"], dtype=np.float64)
-            self.x_min = domain_min[0]
-            self.x_max = domain_max[0]
-            periodic_x = (self.x_min, self.x_max) if domain_cfg.get("periodic_x", False) else None
+            if domain_cfg.get("periodic_x", False):
+                self.x_min = float(domain_min[0])
+                self.x_max = float(domain_max[0])
+                periodic_x = (self.x_min, self.x_max)
+            else:
+                self.x_min = None
+                self.x_max = None
+                periodic_x = None
         else:
             self.x_min = None
             self.x_max = None
@@ -119,6 +124,8 @@ class Simulator:
         if io_cfg.get("enable", False):
             self._outlet_x = float(io_cfg.get("outlet_x", 0.19))
             self._inlet_x = float(io_cfg.get("inlet_x", 0.01))
+            self._inlet_velocity = float(io_cfg.get("inlet_velocity", 0.0))  # 0 → use vx_mean
+            self._outlet_pressure = float(io_cfg.get("outlet_pressure", 0.0))
             # Snapshot yz cross-section from the first x-slice of the initial fluid
             x_first = float(self.fluid.positions[:, 0].min())
             mask_first = np.abs(self.fluid.positions[:, 0] - x_first) < 0.5 * self.spacing
@@ -126,6 +133,8 @@ class Simulator:
         else:
             self._outlet_x = None
             self._inlet_x = None
+            self._inlet_velocity = 0.0
+            self._outlet_pressure = 0.0
             self._inlet_yz = None
 
         self.current_step = 0
@@ -587,16 +596,21 @@ class Simulator:
                 setattr(fl, attr, getattr(fl, attr)[keep])
         fl.n = len(fl.positions)
 
-        # --- Inlet: inject one layer with bulk mean velocity ---
-        vx_mean = float(fl.velocities[:, 0].mean())
-        n_add = len(self._inlet_yz)
+        # --- Inlet: inject exactly n_removed particles ---
+        # Use configured inlet_velocity; fall back to bulk mean if not set.
+        vx_in = self._inlet_velocity if self._inlet_velocity != 0.0 else float(fl.velocities[:, 0].mean())
+        # Inject the same count that left so particle count is conserved exactly.
+        # Cycle through the cross-section template if n_removed differs from layer size.
+        n_template = len(self._inlet_yz)
+        n_add = n_removed
+        template_idx = np.arange(n_add) % n_template  # wrap-around selection
 
         new_pos = np.empty((n_add, fl.dim), dtype=np.float64)
         new_pos[:, 0] = self._inlet_x
-        new_pos[:, 1:] = self._inlet_yz
+        new_pos[:, 1:] = self._inlet_yz[template_idx]
 
         new_vel = np.zeros((n_add, fl.dim), dtype=np.float64)
-        new_vel[:, 0] = vx_mean
+        new_vel[:, 0] = vx_in
 
         fl.positions = np.vstack([fl.positions, new_pos])
         fl.velocities = np.vstack([fl.velocities, new_vel])
