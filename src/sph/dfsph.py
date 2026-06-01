@@ -58,6 +58,7 @@ class DFSPHTimeStep(TimeStep):
         kernel: CubicSplineKernel,
         neighbor_search: KDTreeNeighborSearch,
         nu: float = 0.0,
+        viscosity_factor: float = 3.0,
         gravity: np.ndarray | None = None,
         eta_cd: float = 0.01,
         eta_df: float = 0.01,
@@ -97,6 +98,7 @@ class DFSPHTimeStep(TimeStep):
         self.kernel = kernel
         self.neighbor_search = neighbor_search
         self.nu = float(nu)
+        self.viscosity_factor = float(viscosity_factor)
         self.gravity = gravity if gravity is not None else np.zeros(kernel.dim, dtype=np.float64)
         self.eta_cd = float(eta_cd)
         self.eta_df = float(eta_df)
@@ -633,7 +635,7 @@ class DFSPHTimeStep(TimeStep):
             v_ij = fluid.velocities[pairs.ff_i] - fluid.velocities[pairs.ff_j]
             rdgw = np.sum(pairs.ff_r * grad_ff, axis=1)
             denom = pairs.ff_dist**2 + 0.01 * h**2
-            coeff = 3.0 * self.nu * fluid.mass / fluid.rho0 * rdgw / denom
+            coeff = self.viscosity_factor * self.nu * fluid.mass / fluid.rho0 * rdgw / denom
             force = coeff[:, np.newaxis] * v_ij
             accumulate_force(acc, pairs.ff_i, pairs.ff_j, force)
 
@@ -642,7 +644,7 @@ class DFSPHTimeStep(TimeStep):
             v_diff = fluid.velocities[pairs.fb_i] - boundary.velocities[pairs.fb_j]
             rdgw = np.sum(pairs.fb_r * grad_fb, axis=1)
             denom = pairs.fb_dist**2 + 0.01 * h**2
-            coeff = 3.0 * self.nu * boundary.mass / boundary.rho0 * rdgw / denom
+            coeff = self.viscosity_factor * self.nu * boundary.mass / boundary.rho0 * rdgw / denom
             force = coeff[:, np.newaxis] * v_diff
             scatter_add_2d(acc, pairs.fb_i, force)
 

@@ -162,46 +162,57 @@ class Simulator:
 
     def _create_models(self) -> tuple[FluidModel, BoundaryModel | None]:
         """Create fluid and boundary models from scene configuration."""
-        # Parse fluid configuration
         fluid_cfg = self.scene["fluid"]
-        fluid_min = np.array(fluid_cfg["min"], dtype=np.float64)
-        fluid_max = np.array(fluid_cfg["max"], dtype=np.float64)
+        fluid_type = fluid_cfg.get("type", "box")
 
-        # Generate fluid particles on a regular grid
-        if self.dim == 2:
-            x = np.arange(fluid_min[0], fluid_max[0], self.spacing)
-            y = np.arange(fluid_min[1], fluid_max[1], self.spacing)
-            xx, yy = np.meshgrid(x, y, indexing='ij')
-            fluid_positions = np.column_stack([xx.ravel(), yy.ravel()])
+        if fluid_type == "cylinder_x":
+            fluid_positions = self._generate_cylinder_fluid(fluid_cfg)
         else:
-            x = np.arange(fluid_min[0], fluid_max[0], self.spacing)
-            y = np.arange(fluid_min[1], fluid_max[1], self.spacing)
-            z = np.arange(fluid_min[2], fluid_max[2], self.spacing)
-            xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
-            fluid_positions = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+            fluid_min = np.array(fluid_cfg["min"], dtype=np.float64)
+            fluid_max = np.array(fluid_cfg["max"], dtype=np.float64)
+            if self.dim == 2:
+                x = np.arange(fluid_min[0], fluid_max[0], self.spacing)
+                y = np.arange(fluid_min[1], fluid_max[1], self.spacing)
+                xx, yy = np.meshgrid(x, y, indexing='ij')
+                fluid_positions = np.column_stack([xx.ravel(), yy.ravel()])
+            else:
+                x = np.arange(fluid_min[0], fluid_max[0], self.spacing)
+                y = np.arange(fluid_min[1], fluid_max[1], self.spacing)
+                z = np.arange(fluid_min[2], fluid_max[2], self.spacing)
+                xx, yy, zz = np.meshgrid(x, y, z, indexing='ij')
+                fluid_positions = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
 
-        n_fluid = len(fluid_positions)
-
-        # Compute particle mass using partition of unity
-        # For uniform grid: m = rho0 / sum_j(W_ij)
-        # where the sum is over neighbors of an interior particle
         particle_mass = self._compute_correct_mass()
-
-        # Create fluid model
-        fluid = FluidModel(n_fluid, self.rho0, particle_mass, self.h, self.dim)
+        fluid = FluidModel(len(fluid_positions), self.rho0, particle_mass, self.h, self.dim)
         fluid.positions[:] = fluid_positions
 
-        # Set initial velocity
         initial_velocity = fluid_cfg.get("initial_velocity", [0.0, 0.0])
         fluid.velocities[:] = np.array(initial_velocity[:self.dim], dtype=np.float64)
 
-        # Create boundary model (if specified)
         boundary = None
         domain_cfg = self.scene.get("domain", {})
-        if "boundary_layers" in domain_cfg:
+        if "boundary_layers" in domain_cfg or "cylinder_wall" in domain_cfg:
             boundary = self._create_boundary_particles(domain_cfg)
 
         return fluid, boundary
+
+    def _generate_cylinder_fluid(self, fluid_cfg: dict) -> np.ndarray:
+        """Generate fluid particles inside a cylinder with axis along x."""
+        dx = self.spacing
+        x_vals = np.arange(float(fluid_cfg["axis_min"]), float(fluid_cfg["axis_max"]), dx)
+        cy, cz = float(fluid_cfg["center"][0]), float(fluid_cfg["center"][1])
+        R = float(fluid_cfg["radius"])
+
+        n_max = int(np.ceil(R / dx)) + 1
+        offsets = np.arange(-n_max, n_max + 1) * dx
+
+        positions: list[list[float]] = []
+        for x in x_vals:
+            for dy in offsets:
+                for dz in offsets:
+                    if dy * dy + dz * dz < R * R:
+                        positions.append([x, cy + dy, cz + dz])
+        return np.array(positions, dtype=np.float64)
 
     def _create_boundary_particles(self, domain_cfg: dict | None) -> BoundaryModel | None:
         """
@@ -211,6 +222,9 @@ class Simulator:
         wall particles are always within support_radius of the fluid.
         For periodic-x flows (Poiseuille), left/right walls are omitted.
         """
+        if domain_cfg is not None and "cylinder_wall" in domain_cfg:
+            return self._create_cylinder_wall_particles(domain_cfg)
+
         n_layers = int(domain_cfg.get("boundary_layers", 0)) if domain_cfg else 0
         if n_layers <= 0:
             return None
@@ -302,6 +316,40 @@ class Simulator:
         boundary.positions[:] = boundary_positions
         return boundary
 
+    def _create_cylinder_wall_particles(self, domain_cfg: dict) -> BoundaryModel | None:
+        """Create boundary particles in a shell outside a cylinder aligned with x-axis."""
+        wall_cfg = domain_cfg["cylinder_wall"]
+        n_layers = int(wall_cfg.get("boundary_layers", 2))
+        cy, cz = float(wall_cfg["center"][0]), float(wall_cfg["center"][1])
+        R = float(wall_cfg["radius"])
+        dx = self.spacing
+
+        x_lo = float(np.array(domain_cfg["min"], dtype=np.float64)[0])
+        x_hi = float(np.array(domain_cfg["max"], dtype=np.float64)[0])
+        x_periodic = bool(domain_cfg.get("periodic_x", False))
+        x_vals = np.arange(x_lo, x_hi, dx) if x_periodic else np.arange(x_lo, x_hi + 0.5 * dx, dx)
+
+        R_outer = R + n_layers * dx
+        n_max = int(np.ceil(R_outer / dx)) + 1
+        offsets = np.arange(-n_max, n_max + 1) * dx
+
+        positions: list[list[float]] = []
+        for k_dy in offsets:
+            for k_dz in offsets:
+                r2 = k_dy * k_dy + k_dz * k_dz
+                if R * R <= r2 < R_outer * R_outer:
+                    for x in x_vals:
+                        positions.append([x, cy + k_dy, cz + k_dz])
+
+        if not positions:
+            return None
+
+        boundary_positions = np.unique(np.array(positions, dtype=np.float64), axis=0)
+        particle_mass = self._compute_correct_mass()
+        boundary = BoundaryModel(len(boundary_positions), self.rho0, particle_mass, self.dim)
+        boundary.positions[:] = boundary_positions
+        return boundary
+
     def _configure_kernel_lengths(self, neighbors_cfg: dict) -> None:
         support_radius = float(neighbors_cfg.get("support_radius", 0.0))
         smoothing_length = float(neighbors_cfg.get("h", 0.0))
@@ -370,10 +418,15 @@ class Simulator:
     def _estimate_velocity_scale(self, time_cfg: dict) -> float:
         fluid_cfg = self.scene["fluid"]
         domain_cfg = self.scene.get("domain", {})
-        block_min = np.array(fluid_cfg["min"], dtype=np.float64)
-        block_max = np.array(fluid_cfg["max"], dtype=np.float64)
-        span = block_max - block_min
-        vertical_extent = float(span[1]) if self.dim >= 2 else float(np.max(span))
+        if "min" in fluid_cfg and "max" in fluid_cfg:
+            block_min = np.array(fluid_cfg["min"], dtype=np.float64)
+            block_max = np.array(fluid_cfg["max"], dtype=np.float64)
+            span = block_max - block_min
+            vertical_extent = float(span[1]) if self.dim >= 2 else float(np.max(span))
+        elif "radius" in fluid_cfg:
+            vertical_extent = 2.0 * float(fluid_cfg["radius"])
+        else:
+            vertical_extent = float(self.spacing) * 10.0
 
         if "min" in domain_cfg and "max" in domain_cfg and len(domain_cfg["min"]) >= self.dim:
             domain_min = np.array(domain_cfg["min"], dtype=np.float64)
@@ -401,10 +454,14 @@ class Simulator:
         if self.solver_name == "dfsph":
             from sph.dfsph import DFSPHTimeStep
             periodic_x = (self.x_min, self.x_max) if self.x_min is not None else None
+            solver_cfg = self.scene.get("solver", {})
+            dfsph_cfg = solver_cfg.get("dfsph", {})
+            visc_factor = float(dfsph_cfg.get("viscosity_factor", 3.0))
             return DFSPHTimeStep(
                 kernel=self.kernel,
                 neighbor_search=self.neighbor_search,
                 nu=self._nu,
+                viscosity_factor=visc_factor,
                 gravity=self.gravity_vec,
                 periodic_x=periodic_x,
                 eos_k=self.eos_k,

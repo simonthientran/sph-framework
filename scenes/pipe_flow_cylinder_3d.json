@@ -1,73 +1,86 @@
 {
   "meta": {
-    "name": "3D Cylindrical Pipe Flow (Hagen-Poiseuille)",
+    "name": "3D Cylinder Pipe Flow (Hagen-Poiseuille)",
     "version": 1,
     "dimensions": 3,
-    "scene_type": "periodic_pipe"
+    "description": "Hagen-Poiseuille flow in a cylinder along x. Analytical: vmax = f*R^2/(4*nu) = 0.003*0.07^2/(4*0.12) = 3.0625e-5 m/s. Cylinder radius R=0.07m (=7x spacing), periodic in x.",
+    "scene_type": "cylinder_pipe"
   },
 
   "fluids": [
     {
-      "type": "cylinder",
+      "type": "cylinder_x",
       "name": "fluid",
-      "spacing": 0.01,
-      "min": [0.05, -0.085, -0.085],
-      "max": [0.45, 0.085, 0.085],
-      "axis_center": [0.0, 0.0],
-      "radius": 0.085,
+      "spacing": 0.02,
+      "axis_min": 0.0,
+      "axis_max": 0.2,
+      "center": [0.1, 0.1],
+      "radius": 0.07,
       "initial_velocity": [0.0, 0.0, 0.0]
     }
   ],
 
   "domain": {
-    "min": [0.00, -0.14, -0.14],
-    "max": [0.50, 0.14, 0.14],
-    "periodic_x": true
+    "min": [0.0, 0.0, 0.0],
+    "max": [0.2, 0.2, 0.2],
+    "periodic_x": true,
+    "cylinder_wall": {
+      "center": [0.1, 0.1],
+      "radius": 0.07,
+      "boundary_layers": 2
+    }
   },
 
-  "boundaries": [
-    {
-      "type": "stl",
-      "file": "../assets/cylinder_pipe.stl",
-      "sampling": "poisson",
-      "n_layers": 3
-    }
-  ],
-
   "material": {
-    "rho0": 1000.0
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 50000.0
+    }
   },
 
   "solver": {
     "type": "dfsph",
     "eos_k": 50000.0,
     "dfsph": {
+      "viscosity_factor": 2.0,
       "eta_cd": 0.01,
       "eta_df": 0.1,
       "max_iter_cd": 100,
       "max_iter_df": 100,
-      "density_diffusion": { "enable": true, "delta": 0.1 },
-      "free_surface_stabilization": { "enable": false }
+      "density_diffusion": {
+        "enable": false,
+        "delta": 0.1,
+        "floor_ratio": 0.60
+      },
+      "free_surface_stabilization": {
+        "enable": false
+      }
     }
   },
 
   "forces": {
-    "gravity": [0.0003, 0.0, 0.0],
-    "viscosity": { "enable": true, "nu": 0.01 },
-    "xsph": { "enable": false }
+    "gravity": [0.003, 0.0, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.12
+    },
+    "xsph": {
+      "enable": false
+    }
   },
 
   "neighbors": {
     "type": "kdtree",
-    "support_radius": 0.03
+    "support_radius": 0.04
   },
 
   "time": {
     "mode": "cfl",
     "cfl": 0.4,
     "dt_min": 1.0e-6,
-    "dt_max": 0.002,
-    "steps": 5000
+    "dt_max": 0.0002,
+    "steps": 3000
   },
 
   "export": {
