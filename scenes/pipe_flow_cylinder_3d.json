@@ -3,7 +3,7 @@
     "name": "3D Cylinder Pipe Flow (inlet-driven, water)",
     "version": 2,
     "dimensions": 3,
-    "description": "Inlet-driven pipe flow: nu=0.001 (water), inlet_velocity=0.5 m/s, no body force. Open domain (periodic_x disabled). Outlet removes at x>0.19, inlet injects fresh layer at x=0.01.",
+    "description": "Inlet-driven pipe flow: nu=0.001 (water), inlet_velocity=0.5 m/s, no body force. Open domain (periodic_x disabled). Outlet removes at x>0.95, inlet injects fresh layer at x=0.01. Pipe length 1.0 m.",
     "scene_type": "cylinder_pipe"
   },
 
@@ -13,16 +13,16 @@
       "name": "fluid",
       "spacing": 0.02,
       "axis_min": 0.0,
-      "axis_max": 0.2,
+      "axis_max": 0.95,
       "center": [0.1, 0.1],
       "radius": 0.07,
-      "initial_velocity": [0.5, 0.0, 0.0]
+      "initial_velocity": [0.1, 0.0, 0.0]
     }
   ],
 
   "domain": {
     "min": [0.0, 0.0, 0.0],
-    "max": [0.2, 0.2, 0.2],
+    "max": [1.0, 0.2, 0.2],
     "periodic_x": false,
     "cylinder_wall": {
       "center": [0.1, 0.1],
@@ -31,9 +31,9 @@
     },
     "inlet_outlet": {
       "enable": true,
-      "outlet_x": 0.19,
+      "outlet_x": 0.95,
       "inlet_x": 0.01,
-      "inlet_velocity": 0.5,
+      "inlet_velocity": 0.1,
       "outlet_pressure": 100000.0
     }
   },
@@ -92,6 +92,6 @@
 
   "export": {
     "csv": { "enable": false },
-    "vtk": { "enable": false }
+    "vtk": { "enable": true, "every": 10, "dir": "out/cylinder" }
   }
 }

@@ -296,7 +296,7 @@ class SimWorker(QThread):
                 sim = self.runner.backend.sim
                 metrics = {
                     'step':    int(sim.current_step),
-                    'time':    float(sim.t),
+                    'time':    float(getattr(sim, 't', 0.0)),
                     'dt':      float(rt.runtime.dt),
                     'vmax':    float(spd.max()) if len(spd) else 0.0,
                     'rho_err': float(rt.runtime.rho_error_mean) * 100.0,
@@ -305,6 +305,7 @@ class SimWorker(QThread):
                     'n_fluid': int(fl.n),
                     'positions': pos,
                     'speeds': spd,
+                    'velocities': fl.velocities.copy(),
                 }
                 self.step_done.emit(metrics)
             except Exception as e:
@@ -519,9 +520,10 @@ class MainWindow(QMainWindow):
 
         sg.addWidget(QLabel('Backend:'), 1, 0)
         self._combo_backend = QComboBox()
-        self._combo_backend.addItems(['CUDA (auto)', 'CPU'])
+        self._combo_backend.addItems(['CPU', 'CUDA (auto)'])
+        self._combo_backend.setCurrentIndex(0)
         self._combo_backend.setToolTip(
-            'CUDA (auto): tries GPU, falls back to CPU\nCPU: always use CPU')
+            'CPU: always use CPU\nCUDA (auto): tries GPU, falls back to CPU')
         sg.addWidget(self._combo_backend, 1, 1)
 
         load_btn = QPushButton('Load Scene...')
@@ -715,6 +717,16 @@ class MainWindow(QMainWindow):
             pen=pg.mkPen(COLORS['warning'], width=2))
         cg.addWidget(self._plot_rho)
 
+        self._plot_profile = pg.PlotWidget(title='v(r) profile')
+        self._plot_profile.setFixedHeight(150)
+        self._plot_profile.showGrid(x=True, y=True, alpha=0.15)
+        self._curve_profile_sim = self._plot_profile.plot(
+            pen=pg.mkPen('c', width=2), name='SPH')
+        self._curve_profile_ana = self._plot_profile.plot(
+            pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine),
+            name='Hagen-Poiseuille')
+        cg.addWidget(self._plot_profile)
+
         layout.addWidget(charts_grp)
         layout.addStretch()
 
@@ -754,22 +766,10 @@ class MainWindow(QMainWindow):
         try:
             from sph.core.simulation import SimulationRunner
 
-            # Resolve backend from combo selection
-            combo_text = self._combo_backend.currentText()
-            if 'CUDA' in combo_text:
-                try:
-                    self.runner = SimulationRunner(
-                        Path(path), backend_name='numba_cuda')
-                    self._log_msg('Backend: CUDA')
-                except Exception as cuda_err:
-                    self._log_msg(f'CUDA unavailable ({cuda_err}), using CPU', error=False)
-                    self.runner = SimulationRunner(
-                        Path(path), backend_name='numba_cpu')
-                    self._log_msg('Backend: CPU')
-            else:
-                self.runner = SimulationRunner(
-                    Path(path), backend_name='numba_cpu')
-                self._log_msg('Backend: CPU')
+            self.runner = SimulationRunner(Path(path))
+            self._log_msg('Backend: CPU')
+            # Force CPU for stability
+            print(f'Loaded: {Path(path).name}')
 
             fl = self.runner.backend.sim.fluid
             bd = self.runner.backend.sim.boundary
@@ -842,7 +842,7 @@ class MainWindow(QMainWindow):
             spd = np.linalg.norm(fl.velocities, axis=1)
             self._on_step({
                 'step':      int(sim.current_step),
-                'time':      float(sim.t),
+                'time':      float(getattr(sim, 't', 0.0)),
                 'dt':        float(rt.runtime.dt),
                 'vmax':      float(spd.max()) if len(spd) else 0.0,
                 'rho_err':   float(rt.runtime.rho_error_mean) * 100.0,
@@ -851,9 +851,50 @@ class MainWindow(QMainWindow):
                 'n_fluid':   int(fl.n),
                 'positions': fl.positions.copy(),
                 'speeds':    spd.copy(),
+                'velocities': fl.velocities.copy(),
             })
         except Exception as e:
             self._on_error(str(e))
+
+    def _profile_geometry(self) -> tuple[float, float, float]:
+        """Return (cy, cz, R) for the radial profile, read from the scene's
+        cylinder_wall if available; otherwise fall back to centre (0,0), R=0.07."""
+        cy, cz, R = 0.0, 0.0, 0.07
+        try:
+            scene = self.runner.backend.sim.scene
+            wall = scene.get('domain', {}).get('cylinder_wall')
+            if wall is None:
+                fluids = scene.get('fluids')
+                wall = fluids[0] if fluids else scene.get('fluid')
+            if wall is not None:
+                center = wall.get('center')
+                if center is not None and len(center) >= 2:
+                    cy, cz = float(center[0]), float(center[1])
+                if wall.get('radius') is not None:
+                    R = float(wall['radius'])
+        except Exception:
+            pass
+        return cy, cz, R
+
+    def _update_profile(self, m: dict):
+        pos = m['positions']
+        vel = m.get('velocities')
+        if vel is None or pos.ndim != 2 or pos.shape[1] != 3:
+            return
+        cy, cz, R = self._profile_geometry()
+        r = np.sqrt((pos[:, 1] - cy) ** 2 + (pos[:, 2] - cz) ** 2)
+        vx = vel[:, 0]
+        r_bins = np.linspace(0.0, R, 15)
+        r_centers = 0.5 * (r_bins[:-1] + r_bins[1:])
+        vx_mean = np.array([
+            vx[(r >= r_bins[k]) & (r < r_bins[k + 1])].mean()
+            if ((r >= r_bins[k]) & (r < r_bins[k + 1])).sum() > 0 else 0.0
+            for k in range(len(r_bins) - 1)
+        ])
+        vmax = vx_mean.max() if vx_mean.max() > 0 else 1.0
+        vx_ana = vmax * (1.0 - r_centers ** 2 / R ** 2)
+        self._curve_profile_sim.setData(r_centers, vx_mean)
+        self._curve_profile_ana.setData(r_centers, vx_ana)
 
     def _on_step(self, m: dict):
         colors = self._speed_to_color(m['speeds'])
@@ -884,6 +925,8 @@ class MainWindow(QMainWindow):
         t = self._history['time']
         self._curve_vmax.setData(t, self._history['vmax'])
         self._curve_rho.setData(t, self._history['rho_err'])
+
+        self._update_profile(m)
 
     def _on_error(self, msg: str):
         self._log_msg(f'SIM ERROR: {msg}', error=True)

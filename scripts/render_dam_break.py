@@ -1,100 +1,83 @@
-#!/usr/bin/env python3
+"""
+Render 5 evenly-spaced snapshots of the 3D dam break simulation from VTK files.
+Uses PyVista offscreen rendering with a consistent camera angle.
+"""
 from __future__ import annotations
 
-"""Render key screenshots from the dam-break VTK sequence."""
-
+import glob
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
 
+VTK_DIR = Path("out/dam_break_3d")
+OUT_DIR  = Path("out/dam_break_3d/screenshots")
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-def main() -> int:
-    vtk_dir = Path("out/dam_break_3d")
-    out_dir = vtk_dir / "frames"
-    out_dir.mkdir(parents=True, exist_ok=True)
+# ── collect all fluid VTK files (exclude boundary-only exports) ──────────────
+vtk_files = sorted(VTK_DIR.glob("particles_step_*.vtk"))
+if not vtk_files:
+    print(f"ERROR: no VTK files found in {VTK_DIR}")
+    sys.exit(1)
 
-    vtk_files = sorted(vtk_dir.glob("*.vtk"))
-    if not vtk_files:
-        print("No VTK files found. Run the dam-break simulation first.")
-        return 1
+print(f"Found {len(vtk_files)} VTK files  ({vtk_files[0].name} … {vtk_files[-1].name})")
 
-    n = len(vtk_files)
-    key_frames = [
-        vtk_files[0],
-        vtk_files[n // 4],
-        vtk_files[n // 2],
-        vtk_files[(3 * n) // 4],
-        vtk_files[-1],
+# pick 5 evenly-spaced frames
+indices = np.linspace(0, len(vtk_files) - 1, 5, dtype=int)
+frames  = [vtk_files[i] for i in indices]
+print(f"Rendering frames: {[f.name for f in frames]}")
+
+# ── render each frame ─────────────────────────────────────────────────────────
+pv.global_theme.background = "white"
+pv.global_theme.window_size = [1200, 800]
+
+for idx, vtk_path in enumerate(frames):
+    mesh = pv.read(vtk_path)
+
+    # read speed from velocity VECTORS field
+    if "v" in mesh.point_data.keys():
+        vel = mesh.point_data["v"]
+        speed = np.linalg.norm(vel, axis=1)
+        mesh.point_data["speed"] = speed
+        scalar = "speed"
+        cmap   = "viridis"
+    elif "rho" in mesh.point_data.keys():
+        scalar = "rho"
+        cmap   = "coolwarm"
+    else:
+        scalar = mesh.point_data.active_scalars_name
+        cmap   = "viridis"
+
+    # extract step number from filename
+    stem  = vtk_path.stem  # e.g. particles_step_0500
+    parts = stem.split("_")
+    step_num = parts[-1]   # "0500"
+
+    pl = pv.Plotter(off_screen=True, window_size=[1200, 800])
+    pl.add_mesh(
+        mesh,
+        scalars=scalar,
+        cmap=cmap,
+        point_size=6,
+        render_points_as_spheres=True,
+        clim=None,
+    )
+    pl.add_axes()
+    pl.add_title(f"Dam break – step {int(step_num)}", font_size=14)
+
+    # isometric-ish camera for 3D box  [0,1.0] x [0,0.6] x [0,0.4]
+    pl.camera_position = [
+        (1.8, 1.2, 1.5),   # camera position
+        (0.5, 0.2, 0.2),   # focal point (centre of container)
+        (0.0, 1.0, 0.0),   # up vector
     ]
+    pl.camera.zoom(1.1)
 
-    for index, vtk_file in enumerate(key_frames):
-        mesh = pv.read(vtk_file)
+    out_path = OUT_DIR / f"frame_{idx:02d}_step_{step_num}.png"
+    pl.screenshot(str(out_path))
+    pl.close()
+    print(f"  Saved {out_path}  (scalar={scalar})")
 
-        plotter = pv.Plotter(off_screen=True, window_size=(1200, 800))
-        plotter.set_background("white")
-
-        scalar_name = None
-        if "debug_velocity" in mesh.point_data:
-            velocity = np.asarray(mesh.point_data["debug_velocity"], dtype=np.float64)
-            mesh.point_data["speed"] = np.linalg.norm(velocity, axis=1)
-            scalar_name = "speed"
-        elif "v" in mesh.point_data:
-            velocity = np.asarray(mesh.point_data["v"], dtype=np.float64)
-            mesh.point_data["speed"] = np.linalg.norm(velocity, axis=1)
-            scalar_name = "speed"
-
-        if "is_boundary" in mesh.point_data:
-            is_boundary = np.asarray(mesh.point_data["is_boundary"], dtype=np.float64) > 0.5
-            fluid = mesh.extract_points(~is_boundary, adjacent_cells=False)
-            boundary = mesh.extract_points(is_boundary, adjacent_cells=False)
-        else:
-            fluid = mesh
-            boundary = None
-
-        if boundary is not None and boundary.n_points:
-            plotter.add_mesh(
-                boundary,
-                color="black",
-                point_size=5,
-                opacity=0.20,
-                render_points_as_spheres=True,
-            )
-
-        plotter.add_mesh(
-            fluid,
-            scalars=scalar_name,
-            cmap="plasma",
-            point_size=8,
-            render_points_as_spheres=True,
-            clim=[0.0, 3.0] if scalar_name else None,
-        )
-
-        bounds = [0.0, 1.0, 0.0, 0.6, 0.0, 0.4]
-        plotter.add_mesh(
-            pv.Box(bounds=bounds),
-            style="wireframe",
-            color="black",
-            line_width=2,
-        )
-
-        plotter.camera_position = [
-            (1.8, 0.8, 1.2),
-            (0.5, 0.2, 0.2),
-            (0.0, 1.0, 0.0),
-        ]
-        step_label = vtk_file.stem
-        plotter.add_title(f"Dam Break 3D - {step_label}", font_size=14)
-
-        out_path = out_dir / f"frame_{index:03d}_{step_label}.png"
-        plotter.screenshot(out_path)
-        plotter.close()
-        print(f"Saved {out_path}")
-
-    print(f"\n{len(key_frames)} frames saved to {out_dir}")
-    print("Done.")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+print(f"\nAll {len(frames)} screenshots saved to {OUT_DIR}")

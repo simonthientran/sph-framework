@@ -65,6 +65,7 @@ class DFSPHTimeStep(TimeStep):
         max_iter_cd: int = 20,
         max_iter_df: int = 20,
         periodic_x: tuple[float, float] | None = None,
+        periodic_z: tuple[float, float] | None = None,
         eos_k: float = 8000.0,
         c0: float = 10.0,
         density_diffusion_delta: float = 0.0,
@@ -105,6 +106,7 @@ class DFSPHTimeStep(TimeStep):
         self.max_iter_cd = int(max_iter_cd)
         self.max_iter_df = int(max_iter_df)
         self.periodic_x = periodic_x  # applied internally after position update
+        self.periodic_z = periodic_z  # applied internally after position update
         self.eos_k = float(eos_k)
         self.c0 = float(c0)
         self.delta_density = float(density_diffusion_delta)
@@ -333,6 +335,8 @@ class DFSPHTimeStep(TimeStep):
             fluid.positions += dt * fluid.velocities
             if self.periodic_x is not None:
                 self.apply_periodic_bc_x(fluid, *self.periodic_x)
+            if self.periodic_z is not None:
+                self.apply_periodic_bc_z(fluid, *self.periodic_z)
             timings["integration"] += time.perf_counter() - t_stage
 
             # 5. Divergence-free PPE on updated configuration
@@ -358,6 +362,8 @@ class DFSPHTimeStep(TimeStep):
                 t_stage = time.perf_counter()
                 if self.periodic_x is not None:
                     self.apply_periodic_bc_x(fluid, *self.periodic_x)
+                if self.periodic_z is not None:
+                    self.apply_periodic_bc_z(fluid, *self.periodic_z)
                 pairs2 = self._build_neighbors(fluid, boundary)
                 timings["neighbor_search"] += time.perf_counter() - t_stage
 

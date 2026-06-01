@@ -61,35 +61,41 @@ class Simulator:
         if self.boundary is not None:
             self.boundary.compute_volumes(self.kernel, self.support_radius, self.fluid.positions)
 
-        # Get domain bounds for periodic BC
+        # Get domain bounds — always store x_min/x_max when domain is defined.
+        # self._periodic_x/z store whether wrapping is actually active.
         domain_cfg = self.scene.get("domain", {})
         if "min" in domain_cfg and "max" in domain_cfg:
             domain_min = np.array(domain_cfg["min"], dtype=np.float64)
             domain_max = np.array(domain_cfg["max"], dtype=np.float64)
-            if domain_cfg.get("periodic_x", False):
-                self.x_min = float(domain_min[0])
-                self.x_max = float(domain_max[0])
+            self.x_min = float(domain_min[0])
+            self.x_max = float(domain_max[0])
+            self._periodic_x = bool(domain_cfg.get("periodic_x", False))
+            if self._periodic_x:
                 periodic_x = (self.x_min, self.x_max)
             else:
-                self.x_min = None
-                self.x_max = None
                 periodic_x = None
         else:
             self.x_min = None
             self.x_max = None
+            self._periodic_x = False
             periodic_x = None
 
-        # z-periodic BC (3D only)
+        # z-periodic BC (3D only) — use fluid extent so that neighbour pairs
+        # match the original design.  apply_periodic_bc_z in dfsph.py keeps
+        # positions inside [z_min, z_max) so cKDTree never sees a wrapped
+        # value that equals L_z due to floating-point arithmetic.
         if self.dim == 3 and domain_cfg.get("periodic_z", False) and "min" in domain_cfg:
             fluid_cfg = self.scene["fluid"]
             z_min_f = float(np.array(fluid_cfg["min"], dtype=np.float64)[2])
             z_max_f = float(np.array(fluid_cfg["max"], dtype=np.float64)[2])
             self.z_min: float | None = z_min_f
             self.z_max: float | None = z_max_f
+            self._periodic_z = True
             periodic_z: tuple[float, float] | None = (z_min_f, z_max_f)
         else:
             self.z_min = None
             self.z_max = None
+            self._periodic_z = False
             periodic_z = None
 
         # Create neighbor search with periodic BC support
@@ -553,21 +559,43 @@ class Simulator:
         """Create time step integrator from scene configuration."""
         if self.solver_name == "dfsph":
             from sph.dfsph import DFSPHTimeStep
-            periodic_x = (self.x_min, self.x_max) if self.x_min is not None else None
+            periodic_x = (self.x_min, self.x_max) if self._periodic_x else None
+            periodic_z = (self.z_min, self.z_max) if self._periodic_z else None
             solver_cfg = self.scene.get("solver", {})
             dfsph_cfg = solver_cfg.get("dfsph", {})
-            visc_factor = float(dfsph_cfg.get("viscosity_factor", 3.0))
+            visc_factor   = float(dfsph_cfg.get("viscosity_factor", 3.0))
+            eta_cd        = float(dfsph_cfg.get("eta_cd",        0.01))
+            eta_df        = float(dfsph_cfg.get("eta_df",        0.01))
+            max_iter_cd   = int(dfsph_cfg.get("max_iter_cd",    20))
+            max_iter_df   = int(dfsph_cfg.get("max_iter_df",    20))
+            # free-surface stabilisation sub-block
+            fss_cfg       = dfsph_cfg.get("free_surface_stabilization", {})
+            fss_enable    = bool(fss_cfg.get("enable", True))
+            fss_mode      = str(fss_cfg.get("mode", "density_shift"))
+            fss_strength  = float(fss_cfg.get("strength", 0.4))
+            fss_target    = float(fss_cfg.get("target_ratio", 0.88))
+            fss_max_raise = float(fss_cfg.get("max_raise_ratio", 0.12))
             return DFSPHTimeStep(
                 kernel=self.kernel,
                 neighbor_search=self.neighbor_search,
                 nu=self._nu,
                 viscosity_factor=visc_factor,
                 gravity=self.gravity_vec,
+                eta_cd=eta_cd,
+                eta_df=eta_df,
+                max_iter_cd=max_iter_cd,
+                max_iter_df=max_iter_df,
                 periodic_x=periodic_x,
+                periodic_z=periodic_z,
                 eos_k=self.eos_k,
                 c0=self._c0,
                 density_diffusion_delta=self._density_diffusion_delta,
                 density_diffusion_enable=self._density_diffusion_enable,
+                free_surface_stabilization_enable=fss_enable,
+                free_surface_stabilization_mode=fss_mode,
+                free_surface_stabilization_strength=fss_strength,
+                free_surface_target_ratio=fss_target,
+                free_surface_max_raise_ratio=fss_max_raise,
             )
 
         # Default: WCSPH

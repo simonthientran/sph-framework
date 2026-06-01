@@ -10,8 +10,8 @@ Geometry
   R_inner  = 0.10 m   → 10 × particle_spacing (spacing=0.01), so 10 particle
                           layers fit across the radius (professor requirement)
   R_outer  = 0.13 m   → 3 boundary-particle layers at spacing=0.01
-  L_open   = 0.20 m   → short periodic pipe
-  L_closed = 0.50 m   → longer inlet/outlet pipe
+  L_open   = 1.0 m    → periodic pipe
+  L_closed = 1.0 m    → inlet/outlet pipe
   sections = 64        → round, not faceted
 
 The open cylinder (no end caps) is correct for periodic-x Poiseuille flow.
@@ -159,8 +159,8 @@ def make_closed_cylinder(
 def main() -> None:
     R_INNER = 0.10
     R_OUTER = 0.13
-    L_OPEN = 0.50   # periodic-x benchmark pipe length
-    L_CLOSED = 0.50  # longer pipe for inlet/outlet demo
+    L_OPEN = 1.0    # periodic-x benchmark pipe length
+    L_CLOSED = 1.0  # longer pipe for inlet/outlet demo
     SECTIONS = 64
     CENTER_Y = 0.0
     CENTER_Z = 0.0

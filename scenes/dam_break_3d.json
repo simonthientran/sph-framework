@@ -79,11 +79,15 @@
     "cfl": 0.4,
     "dt_min": 1.0e-5,
     "dt_max": 0.001,
-    "steps": 300
+    "steps": 1500
   },
 
   "export": {
     "csv": { "enable": false },
-    "vtk": { "enable": false }
+    "vtk": {
+      "enable": true,
+      "every": 50,
+      "dir": "out/dam_break_3d"
+    }
   }
 }
