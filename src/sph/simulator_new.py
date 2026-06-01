@@ -214,7 +214,9 @@ class Simulator:
 
         boundary = None
         domain_cfg = self.scene.get("domain", {})
-        if "boundary_layers" in domain_cfg or "cylinder_wall" in domain_cfg:
+        if "box_container" in domain_cfg:
+            boundary = self._create_box_container_particles(domain_cfg)
+        elif "boundary_layers" in domain_cfg or "cylinder_wall" in domain_cfg:
             boundary = self._create_boundary_particles(domain_cfg)
 
         return fluid, boundary
@@ -236,6 +238,81 @@ class Simulator:
                     if dy * dy + dz * dz < R * R:
                         positions.append([x, cy + dy, cz + dz])
         return np.array(positions, dtype=np.float64)
+
+    def _create_box_container_particles(self, domain_cfg: dict) -> BoundaryModel | None:
+        """
+        Place boundary particles lining a rectangular box container.
+
+        Uses domain.min / domain.max as the interior extents so the floor and
+        side walls cover the *full* container, not just the initial fluid block.
+        open_top (default True) leaves the top face open for free surfaces.
+        Corners are padded so adjacent faces overlap and leave no gap.
+        """
+        cfg = domain_cfg.get("box_container", {})
+        n_layers = int(cfg.get("boundary_layers", 2))
+        open_top  = bool(cfg.get("open_top", True))
+
+        dm  = np.array(domain_cfg["min"], dtype=np.float64)
+        dM  = np.array(domain_cfg["max"], dtype=np.float64)
+        dx  = self.spacing
+        buf = n_layers * dx  # padding so adjacent faces overlap at corners
+
+        # Per-axis coordinate arrays for the interior faces
+        def _span(lo, hi, margin=0.0):
+            return np.arange(lo - margin, hi + margin + 0.5 * dx, dx)
+
+        x_inner = _span(dm[0], dM[0])          # floor / top
+        y_inner = _span(dm[1], dM[1] - dx)     # side walls (interior height)
+        z_inner = _span(dm[2], dM[2])          # left / right walls
+        # Extended spans for corner-filling on side / front / back walls
+        y_ext   = _span(dm[1] - buf, dM[1] - dx)
+        z_ext   = _span(dm[2] - buf, dM[2] + buf)
+        x_ext   = _span(dm[0] - buf, dM[0] + buf)
+
+        positions: list = []
+
+        for lay in range(1, n_layers + 1):
+            off = lay * dx
+
+            # Floor  (–y)
+            for x in x_inner:
+                for z in z_inner:
+                    positions.append([x, dm[1] - off, z])
+
+            # Left wall  (–x)
+            for y in y_ext:
+                for z in z_ext:
+                    positions.append([dm[0] - off, y, z])
+
+            # Right wall  (+x)
+            for y in y_ext:
+                for z in z_ext:
+                    positions.append([dM[0] + off, y, z])
+
+            # Front wall  (–z)
+            for x in x_ext:
+                for y in y_ext:
+                    positions.append([x, y, dm[2] - off])
+
+            # Back wall  (+z)
+            for x in x_ext:
+                for y in y_ext:
+                    positions.append([x, y, dM[2] + off])
+
+            # Top  (+y) — only when not open
+            if not open_top:
+                for x in x_inner:
+                    for z in z_inner:
+                        positions.append([x, dM[1] + off, z])
+
+        if not positions:
+            return None
+
+        bpos = np.unique(np.array(positions, dtype=np.float64), axis=0)
+        particle_mass = self._compute_correct_mass()
+        boundary = BoundaryModel(len(bpos), self.rho0, particle_mass, self.dim)
+        boundary.positions[:] = bpos
+        return boundary
 
     def _create_boundary_particles(self, domain_cfg: dict | None) -> BoundaryModel | None:
         """

@@ -279,6 +279,11 @@ class DFSPHTimeStep(TimeStep):
             if self.nu > 0.0:
                 self._compute_viscosity_forces(fluid, boundary, pairs)
             fluid.accelerations += self.gravity
+            # Adami background boundary-pressure force (P_k/ρ_k² term).
+            # The CD/DF solvers handle the complementary P_i/ρ_i² term via λ,
+            # so we only add the boundary-pressure contribution here.
+            if boundary is not None and pairs.fb_i.size:
+                self._apply_boundary_pressure_force(fluid, boundary, pairs)
             fluid.velocities += dt * fluid.accelerations
             timings["integration"] += time.perf_counter() - t_stage
 
@@ -593,32 +598,91 @@ class DFSPHTimeStep(TimeStep):
         boundary: BoundaryModel | None,
         pairs: NeighborPairs,
     ):
-        """Adami-inspired density/pressure and velocity extrapolation to boundary."""
+        """
+        Adami (2012) density/pressure and velocity extrapolation to boundary.
+
+        Boundary pressure uses the full Adami formula including the hydrostatic
+        correction term  ρ_f * g · (x_wall − x_fluid), which is essential for
+        gravity-driven free-surface flows (e.g. dam break).  Without it the
+        boundary exerts no upward force and falling fluid is never decelerated.
+        """
         if boundary is None or not pairs.fb_i.size:
             return
 
-        idx_i_b = pairs.fb_i
-        j_boundary = pairs.fb_j
+        idx_f = pairs.fb_i
+        idx_b = pairs.fb_j
         W = cubic_spline_W_batch(pairs.fb_dist, fluid.h, fluid.dim)
 
+        # --- Density (simple weighted average) ---
         rho_num = np.zeros(boundary.n)
         rho_den = np.zeros(boundary.n)
-        scatter_add_1d(rho_num, j_boundary, fluid.densities[idx_i_b] * W)
-        scatter_add_1d(rho_den, j_boundary, W)
+        scatter_add_1d(rho_num, idx_b, fluid.densities[idx_f] * W)
+        scatter_add_1d(rho_den, idx_b, W)
         valid_rho = rho_den > 1e-6
         boundary.densities[valid_rho] = rho_num[valid_rho] / rho_den[valid_rho]
         boundary.densities[~valid_rho] = boundary.rho0
-        boundary.pressures[:] = self._pressure_from_density(
-            boundary.densities, boundary.rho0
+
+        # --- Pressure: Adami (2012) with hydrostatic correction ---
+        # P_w = Σ_f [P_f + ρ_f · g · (x_w − x_f)] * W / Σ_f W
+        x_wf = boundary.positions[idx_b] - fluid.positions[idx_f]   # (n_pairs, dim)
+        hydrostatic = fluid.densities[idx_f] * np.einsum(
+            "ij,j->i", x_wf, self.gravity
+        )
+        # EOS background pressure of each fluid particle (≈ 0 for DFSPH but kept
+        # for generality; clip negative values so we don't pull fluid into walls)
+        eos_p_f = np.maximum(
+            self._pressure_from_density(fluid.densities[idx_f], boundary.rho0), 0.0
         )
 
+        p_num = np.zeros(boundary.n)
+        p_den = np.zeros(boundary.n)
+        scatter_add_1d(p_num, idx_b, (eos_p_f + hydrostatic) * W)
+        scatter_add_1d(p_den, idx_b, W)
+        valid_p = p_den > 1e-6
+        boundary.pressures[valid_p] = np.maximum(
+            p_num[valid_p] / p_den[valid_p], 0.0
+        )
+        boundary.pressures[~valid_p] = 0.0
+
+        # --- Velocity (mirror / no-slip) ---
         v_num = np.zeros((boundary.n, self.kernel.dim))
         v_den = np.zeros(boundary.n)
-        scatter_add_2d(v_num, j_boundary, fluid.velocities[idx_i_b] * W[:, np.newaxis])
-        scatter_add_1d(v_den, j_boundary, W)
-        valid = v_den > 1e-6
-        boundary.velocities[valid] = -v_num[valid] / v_den[valid, np.newaxis]
-        boundary.velocities[~valid] = 0.0
+        scatter_add_2d(v_num, idx_b, fluid.velocities[idx_f] * W[:, np.newaxis])
+        scatter_add_1d(v_den, idx_b, W)
+        valid_v = v_den > 1e-6
+        boundary.velocities[valid_v] = -v_num[valid_v] / v_den[valid_v, np.newaxis]
+        boundary.velocities[~valid_v] = 0.0
+
+    def _apply_boundary_pressure_force(
+        self,
+        fluid: FluidModel,
+        boundary: BoundaryModel,
+        pairs: NeighborPairs,
+    ) -> None:
+        """
+        Apply the background Adami boundary-pressure acceleration in the
+        prediction step.
+
+        The full Adami momentum term is:
+            a_i += −Σ_k ψ_k (P_i/ρ_i² + P_k/ρ_k²) ∇W_ik
+
+        The P_i/ρ_i² (fluid-pressure) part is handled inside the CD/DF pressure
+        solvers via the λ correction, so here we only add the P_k/ρ_k² part
+        (background boundary pressure).
+        """
+        if not pairs.fb_i.size:
+            return
+
+        gw_fb = cubic_spline_gradW_batch(
+            pairs.fb_r, pairs.fb_dist, fluid.h, fluid.dim
+        )
+        P_b   = boundary.pressures[pairs.fb_j]               # (n_pairs,)
+        rho_b = boundary.densities[pairs.fb_j]               # (n_pairs,)
+        psi_b = boundary.psi[pairs.fb_j]                     # (n_pairs,)
+
+        coeff = psi_b * P_b / (rho_b ** 2 + 1e-12)          # (n_pairs,)
+        acc_contrib = -coeff[:, np.newaxis] * gw_fb          # (n_pairs, dim)
+        scatter_add_2d(fluid.accelerations, pairs.fb_i, acc_contrib)
 
     def _compute_viscosity_forces(
         self,
