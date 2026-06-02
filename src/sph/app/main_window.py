@@ -783,6 +783,20 @@ class MainWindow(QMainWindow):
         if path:
             self._load_scene(path)
 
+    def _update_boundary_display(self):
+        """Show boundary particles as faint gray dots (3-D scenes only)."""
+        if not hasattr(self, 'runner') or self.runner is None:
+            return
+        fl = self.runner.backend.sim.fluid
+        if getattr(fl, 'dim', 2) != 3:
+            return
+        bd = getattr(self.runner.backend.sim, 'boundary', None)
+        if bd is None or not hasattr(bd, 'positions') or len(bd.positions) == 0:
+            return
+        pos = bd.positions.astype(np.float32)
+        self._boundary_scatter.setData(pos=pos)
+        self._boundary_scatter.setVisible(self._show_boundary)
+
     def _load_scene(self, path: str):
         try:
             from sph.core.simulation import SimulationRunner
@@ -796,10 +810,7 @@ class MainWindow(QMainWindow):
             bd = self.runner.backend.sim.boundary
 
             # Boundary particles
-            if bd is not None and hasattr(bd, 'positions') and len(bd.positions) > 0:
-                self._boundary_scatter.setData(
-                    pos=bd.positions.astype(np.float32))
-                self._boundary_scatter.setVisible(self._show_boundary)
+            self._update_boundary_display()
 
             # Fluid particles
             if fl.n > 0:
