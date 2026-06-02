@@ -66,6 +66,8 @@ class RuntimeStats:
     wall_time_ms: float
     stage_timings_ms: Dict[str, float] = field(default_factory=dict)
     solver_metrics: Dict[str, float] = field(default_factory=dict)
+    reynolds_number: float = 0.0
+    regime: str = "LAMINAR"
 
 
 @dataclass(slots=True)

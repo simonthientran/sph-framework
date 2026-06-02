@@ -7,6 +7,8 @@
     "scene_type": "cylinder_pipe"
   },
 
+  "hydraulic_diameter": 0.14,
+
   "fluids": [
     {
       "type": "cylinder_x",

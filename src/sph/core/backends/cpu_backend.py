@@ -242,6 +242,9 @@ class NumbaCPUBackend:
             solver_metrics["cd_converged"] = float(bool(stats_dict.get("cd_converged", True)))
             solver_metrics["df_converged"] = float(bool(stats_dict.get("df_converged", True)))
 
+        re_value = float(stats_dict.get("reynolds_number", 0.0))
+        regime_value = str(stats_dict.get("regime", "LAMINAR"))
+
         return RuntimeStats(
             step=int(self.sim.current_step),
             dt=float(self.sim.dt),
@@ -264,6 +267,8 @@ class NumbaCPUBackend:
             wall_time_ms=wall_time_ms,
             stage_timings_ms={"total": wall_time_ms},
             solver_metrics=solver_metrics,
+            reynolds_number=re_value,
+            regime=regime_value,
         )
 
     def _neighbor_stats(self) -> tuple[int, float, int]:

@@ -303,6 +303,8 @@ class SimWorker(QThread):
                     'iter_cd': rt.runtime.solver_metrics.get('iter_cd', 0),
                     'iter_df': rt.runtime.solver_metrics.get('iter_df', 0),
                     'n_fluid': int(fl.n),
+                    'reynolds_number': float(rt.runtime.reynolds_number),
+                    'regime': str(rt.runtime.regime),
                     'positions': pos,
                     'speeds': spd,
                     'velocities': fl.velocities.copy(),
@@ -686,6 +688,7 @@ class MainWindow(QMainWindow):
         self._stat_iter_df = StatWidget('iter DF',   '')
         self._stat_dt      = StatWidget('dt',        's')
         self._stat_n       = StatWidget('particles', '')
+        self._stat_re      = StatWidget('Re',        '')
 
         sg.addWidget(self._stat_vmax,    0, 0)
         sg.addWidget(self._stat_rho_err, 0, 1)
@@ -693,6 +696,7 @@ class MainWindow(QMainWindow):
         sg.addWidget(self._stat_iter_df, 1, 1)
         sg.addWidget(self._stat_dt,      2, 0)
         sg.addWidget(self._stat_n,       2, 1)
+        sg.addWidget(self._stat_re,      3, 0, 1, 2)
         layout.addWidget(stats_grp)
 
         # Charts
@@ -849,6 +853,8 @@ class MainWindow(QMainWindow):
                 'iter_cd':   rt.runtime.solver_metrics.get('iter_cd', 0),
                 'iter_df':   rt.runtime.solver_metrics.get('iter_df', 0),
                 'n_fluid':   int(fl.n),
+                'reynolds_number': float(rt.runtime.reynolds_number),
+                'regime':    str(rt.runtime.regime),
                 'positions': fl.positions.copy(),
                 'speeds':    spd.copy(),
                 'velocities': fl.velocities.copy(),
@@ -909,6 +915,9 @@ class MainWindow(QMainWindow):
         self._stat_iter_df.set_value(m['iter_df'])
         self._stat_dt.set_value(m['dt'])
         self._stat_n.set_value(m['n_fluid'])
+        re_val = m.get('reynolds_number', 0.0)
+        regime_val = m.get('regime', 'LAMINAR')
+        self._stat_re.set_value(f"{re_val:.2f} ({regime_val})")
         self._lbl_time.setText(f"t = {m['time']:.4f} s")
         self._lbl_step.setText(f"Step: {m['step']}")
 

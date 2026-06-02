@@ -1,13 +1,21 @@
 {
   "meta": {
-    "name": "Benchmark: 3D Periodic Cylindrical Pipe (Hagen-Poiseuille)",
+    "name": "Higher-Re Pipe Flow (body-force-driven, nu=0.0001)",
     "version": 1,
     "dimensions": 3,
-    "description": "Body-force-driven flow in a round-cross-section pipe, periodic in x. Cylinder axis along x, center (y=0.14, z=0.14), radius R=0.10, spacing 0.01. Analytical: u(r)=f/(4*nu)*(R^2-r^2), u_max=f*R^2/(4*nu). With f=0.003, nu=0.12, R=0.10: u_max=6.25e-5 m/s (Stokes, Re<<1). Mirrors the proven benchmark_pipe_flow_3d.json calibration (nu in scene == nu in analytical, default viscosity_factor). Center 0.14 keeps all coords positive.",
+    "description": "Body-force-driven Hagen-Poiseuille flow in a circular pipe. Periodic in x. R=0.10, center=(0.14,0.14), f=0.003, nu=0.0001. Analytical: vmax=f*R^2/(4*nu)=0.75 m/s, vmean~0.375, Re=vmean*0.20/0.0001~750 (laminar, higher Re than laminar_pipe_3d). Note: true turbulence (Re>2300) not achievable at this SPH resolution without turbulence models.",
     "scene_type": "periodic_pipe"
   },
 
   "hydraulic_diameter": 0.20,
+
+  "physics_target": {
+    "Re_expected": 750.0,
+    "regime": "laminar",
+    "expected_profile": "parabolic",
+    "L2_threshold": 0.15,
+    "note": "Higher-Re laminar flow; SPH accuracy lower at this Re. True turbulence not achievable without turbulence models."
+  },
 
   "fluids": [
     {
@@ -65,7 +73,7 @@
     "gravity": [0.003, 0.0, 0.0],
     "viscosity": {
       "enable": true,
-      "nu": 0.12
+      "nu": 0.0001
     },
     "xsph": {
       "enable": false
@@ -82,7 +90,7 @@
     "cfl": 0.4,
     "dt_min": 1.0e-6,
     "dt_max": 0.0002,
-    "steps": 3500
+    "steps": 3000
   },
 
   "export": {

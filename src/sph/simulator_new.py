@@ -21,6 +21,19 @@ from sph.kernels_nb import (
 )
 
 
+def compute_reynolds_number(fluid, nu: float, L_ref: float) -> tuple[float, str]:
+    """Re = v_mean * L_ref / nu"""
+    v_mean = float(np.linalg.norm(fluid.velocities, axis=1).mean())
+    Re = v_mean * L_ref / max(nu, 1e-10)
+    if Re < 2300:
+        regime = "LAMINAR"
+    elif Re < 4000:
+        regime = "TRANSITIONAL"
+    else:
+        regime = "TURBULENT"
+    return Re, regime
+
+
 class Simulator:
     """
     Main simulation orchestrator.
@@ -637,7 +650,19 @@ class Simulator:
         """Advance simulation by one time step."""
         self.dt = self._compute_dt()
         solver_report = self.time_step.step(self.fluid, self.boundary, self.dt)
-        self._last_solver_stats = self._normalize_solver_stats(solver_report)
+        stats = self._normalize_solver_stats(solver_report)
+        # Merge full DFSPH report (iter counts, density errors, etc.)
+        if hasattr(self.time_step, "last_report") and self.time_step.last_report:
+            for k, v in self.time_step.last_report.items():
+                stats.setdefault(k, v)
+        # Reynolds number diagnostics
+        nu = self._nu if self._nu > 0.0 else 0.001
+        L_ref = float(self.scene.get("hydraulic_diameter", 0.14))
+        if self.fluid.n > 0:
+            Re, regime = compute_reynolds_number(self.fluid, nu, L_ref)
+            stats["reynolds_number"] = Re
+            stats["regime"] = regime
+        self._last_solver_stats = stats
         if isinstance(self._last_solver_stats, dict) and not self._last_solver_stats.get("converged", True):
             self._dt_max = max(self._dt_min, 0.5 * self._dt_max)
             if self._use_fixed_dt:
