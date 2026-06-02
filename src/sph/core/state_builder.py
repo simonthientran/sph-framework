@@ -253,6 +253,89 @@ def build_scene_state(scene: dict) -> ParticleState:
     return state
 
 
+def sample_cylinder_x(
+    center: list | np.ndarray,
+    radius: float,
+    height: float,
+    spacing: float,
+) -> np.ndarray:
+    """Fluid particles in a cylinder with axis along x."""
+    cx, cy, cz = (float(v) for v in center[:3])
+    half = float(height) * 0.5
+    dx = float(spacing)
+    R = float(radius)
+    x_vals = np.arange(cx - half, cx + half, dx, dtype=np.float64)
+    n_max = int(np.ceil(R / dx)) + 1
+    offsets = np.arange(-n_max, n_max + 1, dtype=np.float64) * dx
+    positions: list[list[float]] = []
+    for x in x_vals:
+        for dy in offsets:
+            for dz in offsets:
+                if dy * dy + dz * dz < R * R:
+                    positions.append([x, cy + dy, cz + dz])
+    if not positions:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.asarray(positions, dtype=np.float64)
+
+
+def sample_cylinder_y(
+    center: list | np.ndarray,
+    radius: float,
+    height: float,
+    spacing: float,
+) -> np.ndarray:
+    """Fluid particles in a cylinder with axis along y."""
+    cx, cy, cz = (float(v) for v in center[:3])
+    half = float(height) * 0.5
+    dx = float(spacing)
+    R = float(radius)
+    y_vals = np.arange(cy - half, cy + half, dx, dtype=np.float64)
+    n_max = int(np.ceil(R / dx)) + 1
+    offsets = np.arange(-n_max, n_max + 1, dtype=np.float64) * dx
+    positions: list[list[float]] = []
+    for y in y_vals:
+        for dx_off in offsets:
+            for dz in offsets:
+                if dx_off * dx_off + dz * dz < R * R:
+                    positions.append([cx + dx_off, y, cz + dz])
+    if not positions:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.asarray(positions, dtype=np.float64)
+
+
+def sample_cylinder_z(
+    center: list | np.ndarray,
+    radius: float,
+    height: float,
+    spacing: float,
+) -> np.ndarray:
+    """Fluid particles in a cylinder with axis along z."""
+    cx, cy, cz = (float(v) for v in center[:3])
+    half = float(height) * 0.5
+    dx = float(spacing)
+    R = float(radius)
+    z_vals = np.arange(cz - half, cz + half, dx, dtype=np.float64)
+    n_max = int(np.ceil(R / dx)) + 1
+    offsets = np.arange(-n_max, n_max + 1, dtype=np.float64) * dx
+    positions: list[list[float]] = []
+    for z in z_vals:
+        for dx_off in offsets:
+            for dy in offsets:
+                if dx_off * dx_off + dy * dy < R * R:
+                    positions.append([cx + dx_off, cy + dy, z])
+    if not positions:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.asarray(positions, dtype=np.float64)
+
+
+def deduplicate_positions(positions: np.ndarray, spacing: float) -> np.ndarray:
+    if positions.size == 0:
+        return positions
+    rounded = np.round(positions / spacing).astype(np.int64)
+    _, uniq_idx = np.unique(rounded, axis=0, return_index=True)
+    return positions[np.sort(uniq_idx)]
+
+
 def build_fluid_block(scene: dict) -> ParticleState:
     """
     Legacy fluid-only block builder used by existing tests.

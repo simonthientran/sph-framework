@@ -116,22 +116,21 @@ def create_straight_pipe(out_path: Path) -> trimesh.Trimesh:
 
 
 def create_elbow_pipe(out_path: Path) -> trimesh.Trimesh:
-    """Two cylinder sections joined at 90 degrees, R=0.05."""
+    """L-elbow: horizontal arm along z, vertical arm along y. Inner R=0.05 m."""
     radius = 0.05
-    seg_len = 0.5
+    h_len = 0.40   # horizontal along z: z in [-0.2, 0.2]
+    v_len = 0.45   # vertical along y: y in [-0.05, 0.40]
     sections = 64
 
-    # Horizontal segment along x: cylinder defaults to z-axis, rotate to x.
-    h_pipe = trimesh.creation.cylinder(radius=radius, height=seg_len, sections=sections)
-    Rz_to_x = trimesh.transformations.rotation_matrix(np.pi / 2.0, [0, 1, 0])
-    h_pipe.apply_transform(Rz_to_x)
-    h_pipe.apply_translation([seg_len / 2.0, 0.0, 0.0])
+    # Horizontal segment along z (default cylinder axis).
+    h_pipe = trimesh.creation.cylinder(radius=radius, height=h_len, sections=sections)
+    # centered at origin: z in [-0.2, 0.2]
 
-    # Vertical segment along y: rotate z-axis cylinder to y, join at the elbow.
-    v_pipe = trimesh.creation.cylinder(radius=radius, height=seg_len, sections=sections)
-    Rz_to_y = trimesh.transformations.rotation_matrix(np.pi / 2.0, [1, 0, 0])
-    v_pipe.apply_transform(Rz_to_y)
-    v_pipe.apply_translation([seg_len, seg_len / 2.0, 0.0])
+    # Vertical segment along y, meeting horizontal at z = +0.2.
+    v_pipe = trimesh.creation.cylinder(radius=radius, height=v_len, sections=sections)
+    Ry = trimesh.transformations.rotation_matrix(np.pi / 2.0, [1, 0, 0])
+    v_pipe.apply_transform(Ry)
+    v_pipe.apply_translation([0.0, (v_len / 2.0) - 0.05, h_len / 2.0])
 
     try:
         elbow = trimesh.boolean.union([h_pipe, v_pipe])

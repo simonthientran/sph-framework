@@ -1,30 +1,30 @@
 {
   "meta": {
-    "name": "3D Elbow Pipe Flow (body-force-driven)",
+    "name": "3D Elbow Pipe Flow (native z-long STL)",
     "version": 1,
     "dimensions": 3,
-    "description": "Body-force-driven elbow pipe flow. STL geometry: assets/pipes/elbow_pipe.stl (two cylinders joined at 90 deg via boolean union, R=0.05, each 0.4m long). After transform (rotate 90deg around Y, translate [0.2,0.175,0]): horizontal section along x [0,0.4], vertical section along y [0,0.4] at x=0.2. Fluid in horizontal segment interior. Body force [0.003,0,0]. No periodic_x.",
+    "description": "Elbow STL as-is: horizontal arm along z [-0.2,0.2], vertical arm along y [-0.05,0.40], inner R~0.05. Body force +z.",
     "scene_type": "pipe_elbow"
   },
 
-  "fluid": {
-    "type": "cylinder_x",
-    "spacing": 0.02,
-    "center": [0.0, 0.175, 0.0],
-    "radius": 0.040,
-    "height": 0.35,
-    "initial_velocity": [0.0, 0.0, 0.0]
-  },
-
-  "probes": [
-    {"name": "inlet",  "position": [-0.10, 0.175, 0.0]},
-    {"name": "outlet", "position": [ 0.12, 0.175, 0.0]},
-    {"name": "mid",    "position": [ 0.00, 0.175, 0.0]}
+  "fluids": [
+    {
+      "spacing": 0.02,
+      "initial_velocity": [0.0, 0.0, 0.0],
+      "sources": [
+        {
+          "type": "cylinder_z",
+          "center": [0.0, 0.0, 0.0],
+          "radius": 0.038,
+          "height": 0.32
+        }
+      ]
+    }
   ],
 
   "domain": {
-    "min": [-0.10, 0.03, -0.14],
-    "max": [0.65, 0.78, 0.14]
+    "min": [-0.08, -0.08, -0.25],
+    "max": [0.08, 0.50, 0.25]
   },
 
   "material": {
@@ -45,9 +45,9 @@
     },
     "dfsph": {
       "viscosity_factor": 2.0,
-      "eta_cd": 0.01,
+      "eta_cd": 0.05,
       "eta_df": 0.1,
-      "max_iter_cd": 100,
+      "max_iter_cd": 10,
       "max_iter_df": 100,
       "free_surface_stabilization": {
         "enable": false
@@ -56,7 +56,7 @@
   },
 
   "forces": {
-    "gravity": [0.003, 0.0, 0.0],
+    "gravity": [0.0, 0.0, 0.003],
     "viscosity": {
       "enable": true,
       "nu": 0.12
@@ -84,10 +84,9 @@
       "type": "stl",
       "file": "../assets/pipes/elbow_pipe.stl",
       "sampling": "regular",
-      "n_layers": 4,
-      "rotation_axis": [0, 1, 0],
+      "n_layers": 3,
       "rotation_angle": 0,
-      "translation": [0.275, 0.4, 0.0]
+      "translation": [0.0, 0.0, 0.0]
     }
   ],
 

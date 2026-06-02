@@ -9,6 +9,12 @@ import json
 import numpy as np
 from pathlib import Path
 
+from sph.core.state_builder import (
+    deduplicate_positions,
+    sample_cylinder_x,
+    sample_cylinder_y,
+    sample_cylinder_z,
+)
 from sph.fluid_model import FluidModel, BoundaryModel
 from sph.kernel import CubicSplineKernel
 from sph.neighbor_search_kdtree import KDTreeNeighborSearch
@@ -276,8 +282,35 @@ class Simulator:
         fluid_cfg = self.scene["fluid"]
         fluid_type = fluid_cfg.get("type", "box")
 
-        if fluid_type == "cylinder_x":
+        if fluid_cfg.get("sources"):
+            blocks: list[np.ndarray] = []
+            for src in fluid_cfg["sources"]:
+                src_type = str(src.get("type", "block")).lower()
+                center = src.get("center", [0.0, 0.0, 0.0])
+                radius = float(src.get("radius", 0.05))
+                height = float(src.get("height", 0.5))
+                if src_type == "cylinder_x":
+                    blocks.append(sample_cylinder_x(center, radius, height, self.spacing))
+                elif src_type == "cylinder_y":
+                    blocks.append(sample_cylinder_y(center, radius, height, self.spacing))
+                elif src_type == "cylinder_z":
+                    blocks.append(sample_cylinder_z(center, radius, height, self.spacing))
+                else:
+                    raise ValueError(f"Unsupported fluid source type '{src_type}'.")
+            fluid_positions = (
+                deduplicate_positions(np.vstack(blocks), self.spacing)
+                if blocks else np.zeros((0, self.dim), dtype=np.float64)
+            )
+        elif fluid_type == "cylinder_x":
             fluid_positions = self._generate_cylinder_fluid(fluid_cfg)
+        elif fluid_type == "cylinder_y":
+            center = fluid_cfg.get("center", [0.0, 0.0, 0.0])
+            fluid_positions = sample_cylinder_y(
+                center,
+                float(fluid_cfg["radius"]),
+                float(fluid_cfg["height"]),
+                self.spacing,
+            )
         else:
             fluid_min = np.array(fluid_cfg["min"], dtype=np.float64)
             fluid_max = np.array(fluid_cfg["max"], dtype=np.float64)
