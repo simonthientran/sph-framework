@@ -35,7 +35,7 @@ class CubicSplineKernel:
         elif dim == 2:
             self.alpha = 10.0 / (7.0 * np.pi * h * h)
         elif dim == 3:
-            self.alpha = 1.0 / (np.pi * h ** 3)
+            self.alpha = 3.0 / (2.0 * np.pi * h ** 3)
         else:
             raise ValueError("dim must be 1, 2, or 3")
 

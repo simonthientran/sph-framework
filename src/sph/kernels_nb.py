@@ -23,7 +23,7 @@ from numba import njit, prange
 @njit(cache=True)
 def _cubic_spline_alpha(h: float, dim: int) -> float:
     if dim == 3:
-        return 1.0 / (np.pi * h * h * h)
+        return 3.0 / (2.0 * np.pi * h * h * h)
     else:
         return 10.0 / (7.0 * np.pi * h * h)
 
