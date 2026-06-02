@@ -30,6 +30,12 @@ import numpy as np
 
 from sph.core.state import ParticleState
 
+# Forward-reference guard: FluidModel imported lazily to avoid circular imports
+try:
+    from sph.fluid_model import FluidModel as _FluidModel  # type: ignore
+except ImportError:
+    _FluidModel = None  # type: ignore
+
 
 def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
     """
@@ -112,5 +118,105 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
         for i in range(n):
             vx, vy, vz = vel3[i]
             f.write(f"{vx:.17g} {vy:.17g} {vz:.17g}\n")
+
+
+def export_fluid_model_vtk(
+    path: str | Path,
+    fluid,
+    step: int = 0,
+    full_export: bool = True,
+) -> None:
+    """
+    Export a FluidModel as VTK legacy ASCII PolyData.
+
+    Minimal export (full_export=False): positions + velocity only.
+    Full export (full_export=True): adds density, pressure, speed,
+    density_err, and a zero vorticity_z placeholder.
+
+    Parameters
+    ----------
+    path       : output file path (.vtk)
+    fluid      : FluidModel instance
+    step       : simulation step number (written to header comment)
+    full_export: whether to include all diagnostic fields
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    n = int(fluid.n)
+    dim = int(getattr(fluid, 'dim', 3))
+
+    # Positions padded to 3D
+    pos = fluid.positions
+    if dim == 2:
+        pos3 = np.zeros((n, 3), dtype=np.float64)
+        pos3[:, 0:2] = pos
+    else:
+        pos3 = pos.astype(np.float64, copy=False)
+
+    # Velocities padded to 3D
+    vel = fluid.velocities
+    if dim == 2:
+        vel3 = np.zeros((n, 3), dtype=np.float64)
+        vel3[:, 0:2] = vel
+    else:
+        vel3 = vel.astype(np.float64, copy=False)
+
+    rho = fluid.densities.astype(np.float64, copy=False)
+    rho0 = float(getattr(fluid, 'rho0', 1000.0))
+    pressures = getattr(fluid, 'pressures', getattr(fluid, 'p', np.zeros(n)))
+    p = np.asarray(pressures, dtype=np.float64)
+    speed = np.linalg.norm(vel, axis=1).astype(np.float64)
+    density_err = np.abs(rho - rho0) / max(rho0, 1e-12)
+    vorticity_z = np.zeros(n, dtype=np.float64)
+
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write("# vtk DataFile Version 3.0\n")
+        f.write(f"SPH FluidModel export — step {step}\n")
+        f.write("ASCII\n")
+        f.write("DATASET POLYDATA\n")
+
+        f.write(f"POINTS {n} float\n")
+        for i in range(n):
+            x, y, z = pos3[i]
+            f.write(f"{x:.17g} {y:.17g} {z:.17g}\n")
+
+        f.write(f"VERTICES {n} {2 * n}\n")
+        for i in range(n):
+            f.write(f"1 {i}\n")
+
+        f.write(f"POINT_DATA {n}\n")
+
+        # velocity (vector)
+        f.write("VECTORS velocity float\n")
+        for i in range(n):
+            vx, vy, vz = vel3[i]
+            f.write(f"{vx:.17g} {vy:.17g} {vz:.17g}\n")
+
+        if full_export:
+            f.write("SCALARS density float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{float(rho[i]):.17g}\n")
+
+            f.write("SCALARS pressure float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{float(p[i]):.17g}\n")
+
+            f.write("SCALARS speed float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{float(speed[i]):.17g}\n")
+
+            f.write("SCALARS density_err float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{float(density_err[i]):.17g}\n")
+
+            f.write("SCALARS vorticity_z float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for i in range(n):
+                f.write(f"{float(vorticity_z[i]):.17g}\n")
 
 

@@ -380,6 +380,9 @@ class MainWindow(QMainWindow):
             'time': [], 'vmax': [], 'rho_err': [], 'iter_cd': []
         }
         self._show_boundary = True
+        self._scene_R: float = 0.07
+        self._last_frame_time: float = time.time()
+        self._pause_at_step: int = 0
 
         self.setWindowTitle('SPH Framework  —  Professional Edition')
         self.resize(1600, 950)
@@ -570,6 +573,15 @@ class MainWindow(QMainWindow):
         self._chk_diffusion.setChecked(True)
         pg_l.addWidget(self._chk_diffusion, 4, 0, 1, 2)
 
+        pg_l.addWidget(QLabel('Pause at step:'), 5, 0)
+        self._spin_pause_at = QSpinBox()
+        self._spin_pause_at.setRange(0, 999999)
+        self._spin_pause_at.setValue(0)
+        self._spin_pause_at.setToolTip('Pause when step count reaches this value (0 = disabled)')
+        self._spin_pause_at.valueChanged.connect(
+            lambda v: setattr(self, '_pause_at_step', v))
+        pg_l.addWidget(self._spin_pause_at, 5, 1)
+
         layout.addWidget(params_grp)
 
         # Visualization
@@ -659,6 +671,11 @@ class MainWindow(QMainWindow):
         self._lbl_step.setStyleSheet(
             f'color: {COLORS["text_mid"]}; font-size: 11px;')
         layout.addWidget(self._lbl_step)
+
+        self._lbl_fps = QLabel('FPS: —')
+        self._lbl_fps.setStyleSheet(
+            f'color: {COLORS["text_dim"]}; font-size: 11px;')
+        layout.addWidget(self._lbl_fps)
 
         self._lbl_status = QLabel('● IDLE')
         self._lbl_status.setStyleSheet(
@@ -789,6 +806,21 @@ class MainWindow(QMainWindow):
                 self._scatter.setData(pos=fl.positions.astype(np.float32))
 
             n_bd = len(bd.positions) if bd is not None and hasattr(bd, 'positions') else 0
+
+            # Detect pipe radius from boundary particles (Task 1C)
+            if (bd is not None and hasattr(bd, 'positions')
+                    and len(bd.positions) > 0
+                    and bd.positions.shape[1] == 3):
+                center_y = bd.positions[:, 1].mean()
+                center_z = bd.positions[:, 2].mean()
+                r_bd = np.sqrt(
+                    (bd.positions[:, 1] - center_y) ** 2
+                    + (bd.positions[:, 2] - center_z) ** 2
+                )
+                self._scene_R = float(np.percentile(r_bd, 95))
+            else:
+                self._scene_R = 0.07
+
             self._lbl_scene.setText(f'{Path(path).name}\n{fl.n} fluid · {n_bd} boundary')
             self._log_msg(f'Scene loaded: {Path(path).name}')
             self._log_msg(f'Fluid: {fl.n} · Boundary: {n_bd}')
@@ -864,8 +896,9 @@ class MainWindow(QMainWindow):
 
     def _profile_geometry(self) -> tuple[float, float, float]:
         """Return (cy, cz, R) for the radial profile, read from the scene's
-        cylinder_wall if available; otherwise fall back to centre (0,0), R=0.07."""
-        cy, cz, R = 0.0, 0.0, 0.07
+        cylinder_wall if available; otherwise use self._scene_R from boundary
+        particles, or fall back to centre (0,0), R=0.07."""
+        cy, cz, R = 0.0, 0.0, self._scene_R
         try:
             scene = self.runner.backend.sim.scene
             wall = scene.get('domain', {}).get('cylinder_wall')
@@ -911,15 +944,24 @@ class MainWindow(QMainWindow):
 
         self._stat_vmax.set_value(m['vmax'])
         self._stat_rho_err.set_value(m['rho_err'])
-        self._stat_iter_cd.set_value(m['iter_cd'])
+        iter_cd = m['iter_cd']
+        if isinstance(iter_cd, float):
+            iter_cd = int(iter_cd)
+        self._stat_iter_cd.set_value(iter_cd)
         self._stat_iter_df.set_value(m['iter_df'])
         self._stat_dt.set_value(m['dt'])
         self._stat_n.set_value(m['n_fluid'])
         re_val = m.get('reynolds_number', 0.0)
         regime_val = m.get('regime', 'LAMINAR')
         self._stat_re.set_value(f"{re_val:.2f} ({regime_val})")
-        self._lbl_time.setText(f"t = {m['time']:.4f} s")
+        # Task 4A: combined time + step display
+        self._lbl_time.setText(f"t = {m['time']:.4f} s  |  step {m['step']}")
         self._lbl_step.setText(f"Step: {m['step']}")
+        # Task 4B: FPS counter
+        _now = time.time()
+        _fps = 1.0 / max(_now - self._last_frame_time, 1e-6)
+        self._last_frame_time = _now
+        self._lbl_fps.setText(f"FPS: {_fps:.1f}")
 
         max_pts = 500
         self._history['time'].append(m['time'])
@@ -937,6 +979,10 @@ class MainWindow(QMainWindow):
 
         self._update_profile(m)
 
+        # Task 4D: pause at step
+        if self._pause_at_step > 0 and m['step'] >= self._pause_at_step:
+            self._pause()
+
     def _on_error(self, msg: str):
         self._log_msg(f'SIM ERROR: {msg}', error=True)
         self._pause()
@@ -953,8 +999,13 @@ class MainWindow(QMainWindow):
             colors[:, 2] = 1.0
             return colors
 
-        vmax = speeds.max() if n else 0.0
-        t = np.clip(speeds / (vmax * 0.8 + 1e-10), 0.0, 1.0)
+        # Task 4C: percentile colormap for Speed mode
+        if mode == 'Speed':
+            p95 = float(np.percentile(speeds, 95)) if n else 0.0
+            t = np.clip(speeds / max(p95, 1e-6), 0.0, 1.0)
+        else:
+            vmax = speeds.max() if n else 0.0
+            t = np.clip(speeds / (vmax * 0.8 + 1e-10), 0.0, 1.0)
 
         # Plasma-like: blue → cyan → yellow → red
         colors[:, 0] = np.clip(1.5 * t - 0.2, 0.0, 1.0)
