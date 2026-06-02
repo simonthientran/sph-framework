@@ -1,9 +1,9 @@
 {
   "meta": {
-    "name": "Benchmark: 3D Periodic Cylindrical Pipe (Hagen-Poiseuille)",
+    "name": "3D Long Pipe Flow (GUI / visualization)",
     "version": 1,
     "dimensions": 3,
-    "description": "Body-force-driven flow in a round-cross-section pipe, periodic in x. Cylinder axis along x, center (y=0.14, z=0.14), radius R=0.10, spacing 0.01. Analytical: u(r)=f/(4*nu)*(R^2-r^2), u_max=f*R^2/(4*nu). With f=0.003, nu=0.12, R=0.10: u_max=6.25e-5 m/s (Stokes, Re<<1). Mirrors the proven benchmark_pipe_flow_3d.json calibration (nu in scene == nu in analytical, default viscosity_factor). Center 0.14 keeps all coords positive.",
+    "description": "Long body-force-driven cylindrical pipe (L=0.95 m) for GUI visualization and v(r) profile. Same calibration as benchmark_cylinder_pipe_3d.json.",
     "scene_type": "periodic_pipe"
   },
 
@@ -15,7 +15,7 @@
       "name": "fluid",
       "spacing": 0.01,
       "axis_min": 0.0,
-      "axis_max": 0.06,
+      "axis_max": 0.95,
       "center": [0.14, 0.14],
       "radius": 0.10,
       "initial_velocity": [0.0, 0.0, 0.0]
@@ -24,7 +24,7 @@
 
   "domain": {
     "min": [0.0, 0.0, 0.0],
-    "max": [0.06, 0.28, 0.28],
+    "max": [0.95, 0.28, 0.28],
     "periodic_x": true,
     "cylinder_wall": {
       "center": [0.14, 0.14],
@@ -82,7 +82,7 @@
     "cfl": 0.4,
     "dt_min": 1.0e-6,
     "dt_max": 0.0002,
-    "steps": 3500
+    "steps": 500
   },
 
   "export": {

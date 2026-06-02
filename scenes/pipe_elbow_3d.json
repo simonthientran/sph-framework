@@ -8,12 +8,19 @@
   },
 
   "fluid": {
-    "type": "box",
+    "type": "cylinder_x",
     "spacing": 0.02,
-    "min": [-0.040, 0.135, -0.040],
-    "max": [0.300, 0.215, 0.040],
+    "center": [0.0, 0.175, 0.0],
+    "radius": 0.040,
+    "height": 0.35,
     "initial_velocity": [0.0, 0.0, 0.0]
   },
+
+  "probes": [
+    {"name": "inlet",  "position": [-0.10, 0.175, 0.0]},
+    {"name": "outlet", "position": [ 0.12, 0.175, 0.0]},
+    {"name": "mid",    "position": [ 0.00, 0.175, 0.0]}
+  ],
 
   "domain": {
     "min": [-0.10, 0.03, -0.14],

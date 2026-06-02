@@ -21,6 +21,59 @@ from sph.kernels_nb import (
 )
 
 
+class PressureProbe:
+    """
+    Measures pressure/velocity at a fixed point by SPH kernel interpolation.
+    SPlisHSPlasH equivalent: sampling locations.
+    """
+
+    def __init__(self, position: list | np.ndarray, name: str = "probe"):
+        self.position = np.asarray(position, dtype=np.float64)
+        self.name = name
+        self.history: list[dict] = []
+
+    def measure(
+        self,
+        fluid: FluidModel,
+        kernel: CubicSplineKernel,
+        step: int,
+        t: float,
+    ) -> dict:
+        pos = fluid.positions
+        prs = fluid.pressures
+        vel = fluid.velocities
+        dists = np.linalg.norm(pos - self.position, axis=1)
+        mask = dists < 2.0 * kernel.h
+        if mask.sum() == 0:
+            result = {
+                "step": step,
+                "t": t,
+                "name": self.name,
+                "p": 0.0,
+                "vx": 0.0,
+                "vy": 0.0,
+                "vz": 0.0,
+            }
+            self.history.append(result)
+            return result
+
+        w = cubic_spline_W_batch(dists[mask], kernel.h, fluid.dim)
+        w_sum = float(np.sum(w)) + 1e-10
+        p_interp = float(np.sum(prs[mask] * w) / w_sum)
+        v_interp = np.sum(vel[mask] * w[:, np.newaxis], axis=0) / w_sum
+        result = {
+            "step": step,
+            "t": t,
+            "name": self.name,
+            "p": p_interp,
+            "vx": float(v_interp[0]),
+            "vy": float(v_interp[1]) if fluid.dim > 1 else 0.0,
+            "vz": float(v_interp[2]) if fluid.dim > 2 else 0.0,
+        }
+        self.history.append(result)
+        return result
+
+
 def compute_reynolds_number(fluid, nu: float, L_ref: float) -> tuple[float, str]:
     """Re = v_mean * L_ref / nu"""
     v_mean = float(np.linalg.norm(fluid.velocities, axis=1).mean())
@@ -157,6 +210,22 @@ class Simulator:
             self._inlet_yz = None
 
         self.current_step = 0
+        self.t = 0.0
+
+        # Pressure probes (optional scene entries)
+        self.probes: list[PressureProbe] = []
+        self._probe_csv_path: Path | None = None
+        for probe_cfg in self.scene.get("probes", []):
+            pos = probe_cfg.get("position")
+            if pos is None:
+                continue
+            name = str(probe_cfg.get("name", f"probe_{len(self.probes)}"))
+            self.probes.append(PressureProbe(pos, name=name))
+        if self.probes:
+            probe_dir = Path("out/probes")
+            probe_dir.mkdir(parents=True, exist_ok=True)
+            self._probe_csv_path = probe_dir / f"{self.scene_path.stem}.csv"
+            self._write_probe_csv_header()
 
     def _load_scene(self) -> dict:
         """Load scene configuration from JSON file."""
@@ -276,8 +345,19 @@ class Simulator:
     def _generate_cylinder_fluid(self, fluid_cfg: dict) -> np.ndarray:
         """Generate fluid particles inside a cylinder with axis along x."""
         dx = self.spacing
-        x_vals = np.arange(float(fluid_cfg["axis_min"]), float(fluid_cfg["axis_max"]), dx)
-        cy, cz = float(fluid_cfg["center"][0]), float(fluid_cfg["center"][1])
+        center = fluid_cfg.get("center", [0.0, 0.0])
+        if "height" in fluid_cfg and len(center) >= 3:
+            cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
+            half = float(fluid_cfg["height"]) * 0.5
+            axis_min = cx - half
+            axis_max = cx + half
+        else:
+            axis_min = float(fluid_cfg["axis_min"])
+            axis_max = float(fluid_cfg["axis_max"])
+            cy, cz = float(center[0]), float(center[1])
+        x_vals = np.arange(axis_min, axis_max, dx)
+        if "height" in fluid_cfg and len(center) >= 3:
+            cy, cz = float(center[1]), float(center[2])
         R = float(fluid_cfg["radius"])
 
         n_max = int(np.ceil(R / dx)) + 1
@@ -716,7 +796,41 @@ class Simulator:
         if self._inlet_yz is not None:
             self._apply_inlet_outlet()
 
+        self.t += self.dt
         self.current_step += 1
+
+        if self.probes and self.current_step % 10 == 0:
+            for probe in self.probes:
+                probe.measure(self.fluid, self.kernel, self.current_step, self.t)
+            self._write_probe_csv()
+
+    def _write_probe_csv_header(self) -> None:
+        if self._probe_csv_path is None:
+            return
+        with open(self._probe_csv_path, "w", encoding="utf-8") as f:
+            f.write("step,t,name,p,vx,vy,vz\n")
+
+    def _write_probe_csv(self) -> None:
+        if self._probe_csv_path is None or not self.probes:
+            return
+        rows: list[str] = []
+        for probe in self.probes:
+            if not probe.history:
+                continue
+            row = probe.history[-1]
+            rows.append(
+                f"{row['step']},{row['t']:.6f},{row['name']},"
+                f"{row['p']:.6f},{row['vx']:.6f},{row['vy']:.6f},{row['vz']:.6f}\n"
+            )
+        if rows:
+            with open(self._probe_csv_path, "a", encoding="utf-8") as f:
+                f.writelines(rows)
+            for probe in self.probes:
+                probe.history.clear()
+
+    @property
+    def nu(self) -> float:
+        return self._nu
 
     def run(self, n_steps: int, callback=None):
         """
