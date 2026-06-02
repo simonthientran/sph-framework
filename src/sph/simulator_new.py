@@ -238,7 +238,40 @@ class Simulator:
         elif "boundary_layers" in domain_cfg or "cylinder_wall" in domain_cfg:
             boundary = self._create_boundary_particles(domain_cfg)
 
+        # Load STL/OBJ mesh boundaries if present in scene
+        if self.scene.get("boundaries"):
+            boundary = self._create_stl_boundary(boundary)
+
         return fluid, boundary
+
+    def _create_stl_boundary(self, existing: BoundaryModel | None) -> BoundaryModel | None:
+        """Sample particle boundary from STL/OBJ mesh entries and merge with any existing boundary."""
+        from sph.boundaries.mesh_particles import load_mesh_particle_representation_from_scene
+
+        rep = load_mesh_particle_representation_from_scene(
+            scene=self.scene,
+            scene_path=self.scene_path,
+            spacing=self.spacing,
+            dim=self.dim,
+        )
+        if rep is None or rep.count == 0:
+            return existing
+
+        stl_positions = rep.project_particle_positions(
+            dim=self.dim,
+            spacing=self.spacing,
+            deduplicate=False,
+        )
+
+        if existing is not None and existing.n > 0:
+            combined = np.vstack([existing.positions, stl_positions])
+        else:
+            combined = stl_positions
+
+        particle_mass = self._compute_correct_mass()
+        boundary = BoundaryModel(len(combined), self.rho0, particle_mass, self.dim)
+        boundary.positions[:] = combined
+        return boundary
 
     def _generate_cylinder_fluid(self, fluid_cfg: dict) -> np.ndarray:
         """Generate fluid particles inside a cylinder with axis along x."""
@@ -522,6 +555,7 @@ class Simulator:
         self._density_diffusion_enable = bool(diff_cfg.get("enable", True))
         delta_val = diff_cfg.get("delta", diff_cfg.get("alpha", 0.1))
         self._density_diffusion_delta = float(delta_val if delta_val is not None else 0.1)
+        self._density_floor_ratio = float(diff_cfg.get("floor_ratio", 0.85))
 
     def _derive_sound_speed(self, solver_cfg: dict, time_cfg: dict) -> float:
         if "c0" in solver_cfg:
@@ -604,6 +638,7 @@ class Simulator:
                 c0=self._c0,
                 density_diffusion_delta=self._density_diffusion_delta,
                 density_diffusion_enable=self._density_diffusion_enable,
+                density_floor_ratio=self._density_floor_ratio,
                 free_surface_stabilization_enable=fss_enable,
                 free_surface_stabilization_mode=fss_mode,
                 free_surface_stabilization_strength=fss_strength,

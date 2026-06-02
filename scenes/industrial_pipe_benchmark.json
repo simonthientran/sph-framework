@@ -1,13 +1,23 @@
 {
   "meta": {
-    "name": "Benchmark: 3D Periodic Cylindrical Pipe (Hagen-Poiseuille)",
+    "name": "Industrial Pipe Benchmark (Hagen-Poiseuille, nu=0.01)",
     "version": 1,
     "dimensions": 3,
-    "description": "Body-force-driven flow in a round-cross-section pipe, periodic in x. Cylinder axis along x, center (y=0.14, z=0.14), radius R=0.10, spacing 0.01. Analytical: u(r)=f/(4*nu)*(R^2-r^2), u_max=f*R^2/(4*nu). With f=0.003, nu=0.12, R=0.10: u_max=6.25e-5 m/s (Stokes, Re<<1). Mirrors the proven benchmark_pipe_flow_3d.json calibration (nu in scene == nu in analytical, default viscosity_factor). Center 0.14 keeps all coords positive.",
+    "description": "Body-force-driven Poiseuille flow in a cylindrical pipe, periodic in x. R=0.095 m, L=1.0 m, nu=0.01 m²/s. Analytical: u(r)=f/(4*nu)*(R²-r²), u_max=f*R²/(4*nu). With f=0.001, nu=0.01, R=0.095: u_max=f*R²/(4*nu)=0.001*0.009025/0.04≈2.256e-4 m/s. Re=vmean*D/nu≈0.002 (Stokes). Center (0.1,0.1) keeps all coords positive.",
     "scene_type": "periodic_pipe"
   },
 
-  "hydraulic_diameter": 0.20,
+  "hydraulic_diameter": 0.19,
+
+  "physics_target": {
+    "vmax_analytical": 2.256e-4,
+    "vmean_analytical": 1.128e-4,
+    "reynolds_number": 0.002,
+    "regime": "LAMINAR",
+    "body_force": 0.001,
+    "radius": 0.095,
+    "nu": 0.01
+  },
 
   "fluids": [
     {
@@ -15,20 +25,20 @@
       "name": "fluid",
       "spacing": 0.01,
       "axis_min": 0.0,
-      "axis_max": 0.95,
-      "center": [0.14, 0.14],
-      "radius": 0.10,
+      "axis_max": 0.05,
+      "center": [0.12, 0.12],
+      "radius": 0.095,
       "initial_velocity": [0.0, 0.0, 0.0]
     }
   ],
 
   "domain": {
     "min": [0.0, 0.0, 0.0],
-    "max": [0.95, 0.28, 0.28],
+    "max": [0.05, 0.25, 0.25],
     "periodic_x": true,
     "cylinder_wall": {
-      "center": [0.14, 0.14],
-      "radius": 0.10,
+      "center": [0.12, 0.12],
+      "radius": 0.095,
       "boundary_layers": 2
     }
   },
@@ -52,8 +62,7 @@
       "max_iter_df": 100,
       "density_diffusion": {
         "enable": false,
-        "delta": 0.1,
-        "floor_ratio": 0.60
+        "delta": 0.1
       },
       "free_surface_stabilization": {
         "enable": false
@@ -62,10 +71,10 @@
   },
 
   "forces": {
-    "gravity": [0.003, 0.0, 0.0],
+    "gravity": [0.001, 0.0, 0.0],
     "viscosity": {
       "enable": true,
-      "nu": 0.12
+      "nu": 0.01
     },
     "xsph": {
       "enable": false
@@ -81,8 +90,8 @@
     "mode": "cfl",
     "cfl": 0.4,
     "dt_min": 1.0e-6,
-    "dt_max": 0.0002,
-    "steps": 3500
+    "dt_max": 0.001,
+    "steps": 8000
   },
 
   "export": {
