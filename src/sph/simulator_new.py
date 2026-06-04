@@ -277,12 +277,30 @@ class Simulator:
         # Correct mass: m = rho0 / sum(W)
         return self.rho0 / W_sum
 
+    def _resolve_scene_path(self, raw_path: str) -> Path:
+        path = Path(str(raw_path))
+        if path.is_absolute():
+            return path
+        return (self.scene_path.parent / path).resolve()
+
+    def _load_numpy_positions(self, raw_path: str) -> np.ndarray:
+        path = self._resolve_scene_path(raw_path)
+        positions = np.load(path)
+        positions = np.asarray(positions, dtype=np.float64)
+        if positions.ndim != 2 or positions.shape[1] != self.dim:
+            raise ValueError(
+                f"numpy_file {path} must have shape (N, {self.dim}), got {positions.shape}"
+            )
+        return positions
+
     def _create_models(self) -> tuple[FluidModel, BoundaryModel | None]:
         """Create fluid and boundary models from scene configuration."""
         fluid_cfg = self.scene["fluid"]
-        fluid_type = fluid_cfg.get("type", "box")
+        fluid_type = str(fluid_cfg.get("type", "box")).lower()
 
-        if fluid_cfg.get("sources"):
+        if fluid_type == "numpy_file":
+            fluid_positions = self._load_numpy_positions(fluid_cfg["file"])
+        elif fluid_cfg.get("sources"):
             blocks: list[np.ndarray] = []
             for src in fluid_cfg["sources"]:
                 src_type = str(src.get("type", "block")).lower()
@@ -295,6 +313,8 @@ class Simulator:
                     blocks.append(sample_cylinder_y(center, radius, height, self.spacing))
                 elif src_type == "cylinder_z":
                     blocks.append(sample_cylinder_z(center, radius, height, self.spacing))
+                elif src_type == "numpy_file":
+                    blocks.append(self._load_numpy_positions(src["file"]))
                 else:
                     raise ValueError(f"Unsupported fluid source type '{src_type}'.")
             fluid_positions = (
@@ -339,6 +359,18 @@ class Simulator:
             boundary = self._create_box_container_particles(domain_cfg)
         elif "boundary_layers" in domain_cfg or "cylinder_wall" in domain_cfg:
             boundary = self._create_boundary_particles(domain_cfg)
+
+        # Load numpy_file boundaries first
+        for bnd in self.scene.get("boundaries", []):
+            if str(bnd.get("type", "")).lower() == "numpy_file":
+                pos = self._load_numpy_positions(bnd["file"])
+                particle_mass = self._compute_correct_mass()
+                if boundary is not None and boundary.n > 0:
+                    combined = np.vstack([boundary.positions, pos])
+                else:
+                    combined = pos
+                boundary = BoundaryModel(len(combined), self.rho0, particle_mass, self.dim)
+                boundary.positions[:] = combined
 
         # Load STL/OBJ mesh boundaries if present in scene
         if self.scene.get("boundaries"):

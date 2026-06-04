@@ -267,6 +267,226 @@ QScrollBar::handle:vertical:hover {{
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0px; }}
 """
 
+DARK_THEME = """
+QMainWindow, QWidget {
+    background-color: #0d0d12;
+    color: #e8eaed;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+QMenuBar {
+    background-color: #141418;
+    color: #e8eaed;
+    border-bottom: 1px solid #2d2d38;
+}
+QMenuBar::item:selected { background-color: #222230; color: #00b4d8; }
+QMenu {
+    background-color: #141418;
+    color: #e8eaed;
+    border: 1px solid #2d2d38;
+}
+QMenu::item:selected { background-color: #003d50; }
+QToolBar {
+    background-color: #141418;
+    border-bottom: 2px solid #00b4d8;
+    spacing: 4px;
+    padding: 4px;
+}
+QGroupBox {
+    background-color: #141418;
+    border: 1px solid #2d2d38;
+    border-radius: 4px;
+    color: #00b4d8;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 6px;
+    color: #00b4d8;
+}
+QPushButton {
+    background-color: #1a1a22;
+    color: #e8eaed;
+    border: 1px solid #2d2d38;
+    border-radius: 3px;
+    padding: 5px 12px;
+}
+QPushButton:hover {
+    background-color: #222230;
+    border-color: #00b4d8;
+    color: #00b4d8;
+}
+QPushButton#accent_btn {
+    background-color: #003d50;
+    color: #00b4d8;
+    border-color: #00b4d8;
+    font-weight: 600;
+}
+QPushButton#accent_btn:hover {
+    background-color: #00b4d8;
+    color: #0d0d12;
+}
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background-color: #1a1a22;
+    color: #e8eaed;
+    border: 1px solid #2d2d38;
+    border-radius: 3px;
+    padding: 3px 6px;
+}
+QComboBox QAbstractItemView {
+    background-color: #141418;
+    color: #e8eaed;
+    border: 1px solid #2d2d38;
+    selection-background-color: #003d50;
+}
+QSlider::groove:horizontal {
+    background: #1a1a22;
+    height: 4px;
+    border-radius: 2px;
+}
+QSlider::sub-page:horizontal {
+    background: #00b4d8;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #00b4d8;
+    width: 12px; height: 12px;
+    border-radius: 6px;
+    margin: -4px 0;
+}
+QTextEdit {
+    background-color: #0a0a10;
+    color: #7ec8a4;
+    border: 1px solid #2d2d38;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+}
+QStatusBar {
+    background-color: #141418;
+    border-top: 1px solid #2d2d38;
+    color: #6b7280;
+}
+QCheckBox { color: #e8eaed; }
+QProgressBar {
+    background-color: #1a1a22;
+    border: 1px solid #2d2d38;
+    border-radius: 3px;
+    color: #e8eaed;
+}
+QProgressBar::chunk { background-color: #00b4d8; }
+"""
+
+LIGHT_THEME = """
+QMainWindow, QWidget {
+    background-color: #f5f5f7;
+    color: #1d1d1f;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+QMenuBar {
+    background-color: #ffffff;
+    color: #1d1d1f;
+    border-bottom: 1px solid #d1d5db;
+}
+QMenuBar::item:selected { background-color: #f0f9ff; color: #0077b6; }
+QMenu {
+    background-color: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d1d5db;
+}
+QMenu::item:selected { background-color: #e0f2fe; }
+QToolBar {
+    background-color: #ffffff;
+    border-bottom: 2px solid #0077b6;
+    spacing: 4px;
+    padding: 4px;
+}
+QGroupBox {
+    background-color: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    color: #0077b6;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 6px;
+    color: #0077b6;
+}
+QPushButton {
+    background-color: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    padding: 5px 12px;
+}
+QPushButton:hover {
+    background-color: #f0f9ff;
+    border-color: #0077b6;
+    color: #0077b6;
+}
+QPushButton#accent_btn {
+    background-color: #0077b6;
+    color: #ffffff;
+    border-color: #0077b6;
+    font-weight: 600;
+}
+QPushButton#accent_btn:hover {
+    background-color: #005f8a;
+}
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background-color: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    padding: 3px 6px;
+}
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #1d1d1f;
+    border: 1px solid #d1d5db;
+    selection-background-color: #e0f2fe;
+}
+QSlider::groove:horizontal {
+    background: #e5e7eb;
+    height: 4px;
+    border-radius: 2px;
+}
+QSlider::sub-page:horizontal {
+    background: #0077b6;
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #0077b6;
+    width: 12px; height: 12px;
+    border-radius: 6px;
+    margin: -4px 0;
+}
+QTextEdit {
+    background-color: #f9fafb;
+    color: #065f46;
+    border: 1px solid #d1d5db;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+}
+QStatusBar {
+    background-color: #ffffff;
+    border-top: 1px solid #d1d5db;
+    color: #6b7280;
+}
+QCheckBox { color: #1d1d1f; }
+QProgressBar {
+    background-color: #e5e7eb;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    color: #1d1d1f;
+}
+QProgressBar::chunk { background-color: #0077b6; }
+"""
+
+COLORMAP_OPTIONS = ('Plasma', 'Viridis', 'Turbo', 'Hot', 'Cool')
+
 
 # ══════════════════════════════════════════════════════
 # SIMULATION WORKER THREAD
@@ -383,11 +603,15 @@ class MainWindow(QMainWindow):
         self._scene_R: float = 0.07
         self._last_frame_time: float = time.time()
         self._pause_at_step: int = 0
+        self._dark_mode = True
+        self._fps = 0.0
+        self._colorbar_vmin = 0.0
+        self._colorbar_vmax = 1.0
 
         self.setWindowTitle('SPH Framework  —  Professional Edition')
         self.resize(1600, 950)
         self.setMinimumSize(1200, 700)
-        self.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(DARK_THEME)
 
         self._build_menu()
         self._build_toolbar()
@@ -439,6 +663,8 @@ class MainWindow(QMainWindow):
             vm, 'Show Boundary Particles',
             self._toggle_boundary, checkable=True)
         self._act_boundary.setChecked(True)
+        vm.addSeparator()
+        self._act_theme = vm.addAction('Light Mode', self._toggle_theme)
 
         hm = mb.addMenu('Help')
         act(hm, 'About', self._about)
@@ -595,11 +821,18 @@ class MainWindow(QMainWindow):
             ['Speed', 'Density error', 'Pressure', 'Solid color'])
         vg.addWidget(self._combo_color, 0, 1)
 
-        vg.addWidget(QLabel('Particle size:'), 1, 0)
+        vg.addWidget(QLabel('Colormap:'), 1, 0)
+        self._combo_colormap = QComboBox()
+        self._combo_colormap.addItems(list(COLORMAP_OPTIONS))
+        self._combo_colormap.currentTextChanged.connect(
+            self._on_colormap_changed)
+        vg.addWidget(self._combo_colormap, 1, 1)
+
+        vg.addWidget(QLabel('Particle size:'), 2, 0)
         self._slider_size = QSlider(Qt.Orientation.Horizontal)
         self._slider_size.setRange(1, 20)
         self._slider_size.setValue(6)
-        vg.addWidget(self._slider_size, 1, 1)
+        vg.addWidget(self._slider_size, 2, 1)
 
         layout.addWidget(vis_grp)
         layout.addStretch()
@@ -623,20 +856,21 @@ class MainWindow(QMainWindow):
 
         pg.setConfigOptions(antialias=True)
         self.gl_widget = gl.GLViewWidget()
-        self.gl_widget.setBackgroundColor(pg.mkColor(COLORS['bg_dark']))
+        self.gl_widget.setBackgroundColor(pg.mkColor(13, 13, 18))
         self.gl_widget.setCameraPosition(distance=3.5, elevation=25, azimuth=45)
 
         grid = gl.GLGridItem()
-        grid.setColor(pg.mkColor(50, 50, 60, 80))
-        grid.setSize(4, 4)
-        grid.setSpacing(0.25, 0.25)
+        grid.setColor(pg.mkColor(40, 42, 54, 60))
+        grid.setSize(3, 3)
+        grid.setSpacing(0.1, 0.1)
         self.gl_widget.addItem(grid)
 
         self._scatter = gl.GLScatterPlotItem(
             pos=np.zeros((1, 3), dtype=np.float32),
-            size=6,
+            size=6.0,
             color=(0.2, 0.6, 1.0, 0.9),
             pxMode=True)
+        self._scatter.setGLOptions('additive')
         self.gl_widget.addItem(self._scatter)
 
         self._boundary_scatter = gl.GLScatterPlotItem(
@@ -724,7 +958,9 @@ class MainWindow(QMainWindow):
         pg.setConfigOption('background', COLORS['bg_widget'])
         pg.setConfigOption('foreground', COLORS['text_mid'])
 
+        plot_bg = pg.mkColor(20, 20, 28)
         self._plot_vmax = pg.PlotWidget(title='v_max')
+        self._plot_vmax.setBackground(plot_bg)
         self._plot_vmax.setFixedHeight(130)
         self._plot_vmax.showGrid(x=True, y=True, alpha=0.15)
         self._curve_vmax = self._plot_vmax.plot(
@@ -732,6 +968,7 @@ class MainWindow(QMainWindow):
         cg.addWidget(self._plot_vmax)
 
         self._plot_rho = pg.PlotWidget(title='ρ error %')
+        self._plot_rho.setBackground(plot_bg)
         self._plot_rho.setFixedHeight(130)
         self._plot_rho.showGrid(x=True, y=True, alpha=0.15)
         self._curve_rho = self._plot_rho.plot(
@@ -739,6 +976,7 @@ class MainWindow(QMainWindow):
         cg.addWidget(self._plot_rho)
 
         self._plot_profile = pg.PlotWidget(title='v(r) profile')
+        self._plot_profile.setBackground(plot_bg)
         self._plot_profile.setFixedHeight(150)
         self._plot_profile.showGrid(x=True, y=True, alpha=0.15)
         self._curve_profile_sim = self._plot_profile.plot(
@@ -749,6 +987,12 @@ class MainWindow(QMainWindow):
         cg.addWidget(self._plot_profile)
 
         layout.addWidget(charts_grp)
+
+        cbar_grp = QGroupBox('Colormap Scale')
+        cbar_layout = QVBoxLayout(cbar_grp)
+        cbar_layout.addWidget(self._build_colorbar())
+        layout.addWidget(cbar_grp)
+
         layout.addStretch()
 
         # Export
@@ -769,10 +1013,182 @@ class MainWindow(QMainWindow):
         sb = QStatusBar()
         self.setStatusBar(sb)
         self._sb_left = QLabel('Ready')
-        self._sb_right = QLabel('SPH Framework  |  DFSPH Solver  |  3D')
+        self._sb_right = QLabel(
+            'SPH Framework  │  DFSPH Solver  │  3D  │  GPU-Ready  ')
         self._sb_right.setStyleSheet(f'color: {COLORS["text_dim"]};')
         sb.addWidget(self._sb_left)
         sb.addPermanentWidget(self._sb_right)
+
+    def _build_colorbar(self) -> QWidget:
+        """Vertical colorbar with min/max labels for the active colormap."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(8)
+
+        self._lbl_cbar_max = QLabel('1.00')
+        self._lbl_cbar_max.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._lbl_cbar_max.setStyleSheet(
+            f'color: {COLORS["text_mid"]}; font-family: Consolas; font-size: 10px;')
+
+        self._colorbar_widget = pg.GraphicsLayoutWidget()
+        self._colorbar_widget.setFixedWidth(48)
+        self._colorbar_widget.setFixedHeight(200)
+        self._colorbar_widget.setBackground(pg.mkColor(20, 20, 28))
+        self._colorbar_plot = self._colorbar_widget.addPlot(
+            row=0, col=0, rowspan=1, colspan=1)
+        self._colorbar_plot.hideAxis('bottom')
+        self._colorbar_plot.hideAxis('left')
+        self._colorbar_plot.setAspectLocked(False)
+        self._colorbar_img = pg.ImageItem()
+        self._colorbar_plot.addItem(self._colorbar_img)
+        self._refresh_colorbar_image()
+
+        self._lbl_cbar_min = QLabel('0.00')
+        self._lbl_cbar_min.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._lbl_cbar_min.setStyleSheet(
+            f'color: {COLORS["text_mid"]}; font-family: Consolas; font-size: 10px;')
+
+        labels = QVBoxLayout()
+        labels.addWidget(self._lbl_cbar_max)
+        labels.addStretch()
+        labels.addWidget(self._lbl_cbar_min)
+
+        row.addLayout(labels)
+        row.addWidget(self._colorbar_widget)
+        return container
+
+    def _refresh_colorbar_image(self) -> None:
+        """Redraw colorbar gradient from current colormap selection."""
+        mode = self._combo_colormap.currentText()
+        t = np.linspace(1.0, 0.0, 256)
+        colors = self._apply_colormap(t, mode)
+        img = (colors[:, :3] * 255).astype(np.uint8)
+        img = img.reshape(256, 1, 3)
+        self._colorbar_img.setImage(img)
+        self._colorbar_plot.setRange(
+            xRange=(0, 1), yRange=(0, 256), padding=0)
+
+    def _on_colormap_changed(self, _text: str) -> None:
+        self._refresh_colorbar_image()
+        if self.runner and self.runner.backend.sim.fluid.n > 0:
+            fl = self.runner.backend.sim.fluid
+            speeds = np.linalg.norm(fl.velocities, axis=1)
+            colors = self._particle_colors(speeds, speeds)
+            self._scatter.setData(
+                pos=fl.positions.astype(np.float32), color=colors)
+
+    def _apply_colormap(self, values: np.ndarray, mode: str) -> np.ndarray:
+        """Scientific colormaps for CFD visualization."""
+        n = len(values)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, 3] = 0.92
+
+        vmax = float(np.percentile(values, 95)) if n else 1.0
+        vmin = float(values.min()) if n else 0.0
+        self._colorbar_vmin = vmin
+        self._colorbar_vmax = vmax
+        t = np.clip((values - vmin) / (vmax - vmin + 1e-10), 0, 1)
+
+        if mode == 'Plasma':
+            colors[:, 0] = np.clip(0.05 + 2.2 * t - 0.9 * t ** 2, 0, 1)
+            colors[:, 1] = np.clip(0.0 + 0.5 * t ** 2, 0, 1)
+            colors[:, 2] = np.clip(0.5 - 0.5 * t + 0.3 * np.sin(t * np.pi), 0, 1)
+
+        elif mode == 'Viridis':
+            colors[:, 0] = np.clip(0.27 + 0.7 * t ** 1.5, 0, 1)
+            colors[:, 1] = np.clip(0.00 + 0.9 * np.sin(t * np.pi * 0.7), 0, 1)
+            colors[:, 2] = np.clip(0.33 - 0.2 * t, 0, 1)
+
+        elif mode == 'Turbo':
+            colors[:, 0] = np.clip(
+                np.where(t < 0.5, 4 * t - 0.5, 1.0 - 2 * (t - 0.5)), 0, 1)
+            colors[:, 1] = np.clip(
+                np.where(t < 0.25, 4 * t,
+                         np.where(t < 0.75, 1.0, 4 * (1 - t))), 0, 1)
+            colors[:, 2] = np.clip(
+                np.where(t < 0.5, 1.0 - 2 * t, 0.0), 0, 1)
+
+        elif mode == 'Hot':
+            colors[:, 0] = np.clip(t * 3.0, 0, 1)
+            colors[:, 1] = np.clip(t * 3.0 - 1.0, 0, 1)
+            colors[:, 2] = np.clip(t * 3.0 - 2.0, 0, 1)
+
+        elif mode == 'Cool':
+            colors[:, 0] = t
+            colors[:, 1] = 1.0 - t
+            colors[:, 2] = 1.0
+
+        else:
+            colors[:, 0] = np.clip(1.5 * t - 0.2, 0, 1)
+            colors[:, 1] = np.clip(np.sin(t * np.pi) * 0.9, 0, 1)
+            colors[:, 2] = np.clip(1.0 - 1.5 * t, 0, 1)
+
+        return colors
+
+    def _particle_colors(
+        self, speeds: np.ndarray, values: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Map particle field to RGBA using color-by mode and colormap."""
+        mode = self._combo_color.currentText()
+        n = len(speeds)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, 3] = 0.92
+
+        if mode == 'Solid color':
+            colors[:, 0] = 0.2
+            colors[:, 1] = 0.6
+            colors[:, 2] = 1.0
+            return colors
+
+        if values is None:
+            values = speeds
+
+        if mode == 'Speed':
+            return self._apply_colormap(speeds, self._combo_colormap.currentText())
+
+        vmax = float(values.max()) if n else 1.0
+        t = np.clip(values / (vmax * 0.8 + 1e-10), 0.0, 1.0)
+        return self._apply_colormap(t, self._combo_colormap.currentText())
+
+    def _toggle_theme(self) -> None:
+        plot_bg_dark = pg.mkColor(20, 20, 28)
+        plot_bg_light = pg.mkColor(255, 255, 255)
+        cbar_bg_dark = pg.mkColor(20, 20, 28)
+        cbar_bg_light = pg.mkColor(245, 245, 247)
+
+        if self._dark_mode:
+            self.setStyleSheet(LIGHT_THEME)
+            self._dark_mode = False
+            self._act_theme.setText('Dark Mode')
+            self.gl_widget.setBackgroundColor(pg.mkColor(245, 245, 247))
+            for plot in (self._plot_vmax, self._plot_rho, self._plot_profile):
+                plot.setBackground(plot_bg_light)
+            self._colorbar_widget.setBackground(cbar_bg_light)
+        else:
+            self.setStyleSheet(DARK_THEME)
+            self._dark_mode = True
+            self._act_theme.setText('Light Mode')
+            self.gl_widget.setBackgroundColor(pg.mkColor(13, 13, 18))
+            for plot in (self._plot_vmax, self._plot_rho, self._plot_profile):
+                plot.setBackground(plot_bg_dark)
+            self._colorbar_widget.setBackground(cbar_bg_dark)
+
+    def _update_status_bar(self, metrics: dict) -> None:
+        vmax = metrics.get('vmax', 0)
+        re_val = metrics.get('reynolds_number', 0)
+        regime = metrics.get('regime', 'LAMINAR')
+        n = metrics.get('n_fluid', 0)
+        fps = getattr(self, '_fps', 0)
+
+        self._sb_left.setText(
+            f"  v_max: {vmax:.4f} m/s  │  "
+            f"Re: {re_val:.1f} ({regime})  │  "
+            f"Particles: {n:,}  │  "
+            f"FPS: {fps:.1f}")
+
+        self._sb_right.setText(
+            "SPH Framework  │  DFSPH Solver  │  3D  │  GPU-Ready  ")
 
     # ── Actions ──────────────────────────────────────
 
@@ -947,11 +1363,20 @@ class MainWindow(QMainWindow):
         self._curve_profile_ana.setData(r_centers, vx_ana)
 
     def _on_step(self, m: dict):
-        colors = self._speed_to_color(m['speeds'])
+        speeds = m['speeds']
+        colors = self._particle_colors(speeds)
+        base_size = float(self._slider_size.value())
+        if len(speeds) > 0:
+            slow_thresh = float(np.percentile(speeds, 10))
+            sizes = np.where(speeds < slow_thresh, 3.0, 6.0) * (base_size / 6.0)
+        else:
+            sizes = base_size
         self._scatter.setData(
             pos=m['positions'].astype(np.float32),
             color=colors,
-            size=self._slider_size.value())
+            size=sizes)
+        self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
+        self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
 
         self._stat_vmax.set_value(m['vmax'])
         self._stat_rho_err.set_value(m['rho_err'])
@@ -973,6 +1398,8 @@ class MainWindow(QMainWindow):
         _fps = 1.0 / max(_now - self._last_frame_time, 1e-6)
         self._last_frame_time = _now
         self._lbl_fps.setText(f"FPS: {_fps:.1f}")
+        self._fps = _fps
+        self._update_status_bar(m)
 
         max_pts = 500
         self._history['time'].append(m['time'])
@@ -997,32 +1424,6 @@ class MainWindow(QMainWindow):
     def _on_error(self, msg: str):
         self._log_msg(f'SIM ERROR: {msg}', error=True)
         self._pause()
-
-    def _speed_to_color(self, speeds: np.ndarray) -> np.ndarray:
-        mode = self._combo_color.currentText()
-        n = len(speeds)
-        colors = np.zeros((n, 4), dtype=np.float32)
-        colors[:, 3] = 0.9
-
-        if mode == 'Solid color':
-            colors[:, 0] = 0.2
-            colors[:, 1] = 0.6
-            colors[:, 2] = 1.0
-            return colors
-
-        # Task 4C: percentile colormap for Speed mode
-        if mode == 'Speed':
-            p95 = float(np.percentile(speeds, 95)) if n else 0.0
-            t = np.clip(speeds / max(p95, 1e-6), 0.0, 1.0)
-        else:
-            vmax = speeds.max() if n else 0.0
-            t = np.clip(speeds / (vmax * 0.8 + 1e-10), 0.0, 1.0)
-
-        # Plasma-like: blue → cyan → yellow → red
-        colors[:, 0] = np.clip(1.5 * t - 0.2, 0.0, 1.0)
-        colors[:, 1] = np.clip(np.sin(t * np.pi) * 0.9, 0.0, 1.0)
-        colors[:, 2] = np.clip(1.0 - 1.5 * t, 0.0, 1.0)
-        return colors
 
     def _toggle_boundary(self, checked: bool):
         self._show_boundary = checked
