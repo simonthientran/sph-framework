@@ -1,0 +1,85 @@
+{
+  "meta": {
+    "name": "3D Elbow Pipe Flow (analytical L-shape)",
+    "version": 1,
+    "dimensions": 3,
+    "description": "Analytical L-elbow: horizontal arm along +x, vertical arm along +y at x=L. Boundary and fluid from precomputed numpy arrays.",
+    "scene_type": "pipe_elbow_analytical"
+  },
+
+  "fluid": {
+    "type": "numpy_file",
+    "file": "../assets/elbow_analytical/fluid.npy",
+    "spacing": 0.01,
+    "initial_velocity": [0.0, 0.0, 0.0]
+  },
+
+  "domain": {
+    "min": [-0.05, -0.05, -0.12],
+    "max": [0.45, 0.45, 0.12]
+  },
+
+  "material": {
+    "rho0": 1000.0,
+    "eos": {
+      "type": "linear",
+      "k": 50000.0
+    }
+  },
+
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 50000.0,
+    "density_diffusion": {
+      "enable": true,
+      "delta": 0.1,
+      "floor_ratio": 0.97
+    },
+    "dfsph": {
+      "viscosity_factor": 2.0,
+      "eta_cd": 0.05,
+      "eta_df": 0.1,
+      "max_iter_cd": 10,
+      "max_iter_df": 100,
+      "free_surface_stabilization": {
+        "enable": false
+      }
+    }
+  },
+
+  "forces": {
+    "gravity": [0.1, 0.0, 0.0],
+    "viscosity": {
+      "enable": true,
+      "nu": 0.001
+    },
+    "xsph": {
+      "enable": false
+    }
+  },
+
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.04
+  },
+
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1.0e-6,
+    "dt_max": 0.0002,
+    "steps": 500
+  },
+
+  "boundaries": [
+    {
+      "type": "numpy_file",
+      "file": "../assets/elbow_analytical/boundary.npy"
+    }
+  ],
+
+  "export": {
+    "csv": { "enable": false },
+    "vtk": { "enable": false }
+  }
+}

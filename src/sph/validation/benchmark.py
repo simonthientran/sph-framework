@@ -13,16 +13,18 @@ def run_pipe_flow_benchmark(scene_path: Path, steps: int) -> List[Dict]:
     reports: List[Dict] = []
     for _ in range(steps):
         result = runner.step()
-        metrics = result.metrics
+        metrics = result.runtime
         reports.append(
             {
-                "step": metrics.step,
-                "dt": metrics.dt,
-                "rho_mean": metrics.rho_mean,
-                "rho_rel_err_mean": metrics.rho_error_mean,
-                "neighbor_mean": metrics.neighbor_mean,
-                "velocity_max": metrics.velocity_max,
-                "stability": metrics.stability,
+                "step": getattr(metrics, "step", 0),
+                "dt": getattr(metrics, "dt", 0.0),
+                "rho_mean": getattr(metrics, "rho_mean", 0.0),
+                "rho_rel_err_mean": getattr(metrics, "rho_error_mean", 0.0),
+                "rho_error_mean": getattr(metrics, "rho_error_mean", 0.0),
+                "neighbor_mean": getattr(metrics, "neighbor_mean", 0.0),
+                "velocity_max": getattr(metrics, "velocity_max", 0.0),
+                "stability": getattr(metrics, "stability", "unknown"),
+                "fluid_count": getattr(metrics, "fluid_count", 0),
             }
         )
     return reports

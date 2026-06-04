@@ -29,15 +29,17 @@ class ValidationReport:
         rho_tol: float = 0.02,
         neighbor_tol: int = 10,
     ) -> "ValidationReport":
-        density_error_mean = float(abs(diagnostics.rho_rel_err_mean))
+        density_error_mean = float(abs(diagnostics.rho_error_mean))
         stability: Classification
-        if diagnostics.n_fluid == 0:
+        n_fluid = getattr(diagnostics, "n_fluid", getattr(diagnostics, "fluid_count", 0))
+        neigh_min = getattr(diagnostics, "neigh_min", getattr(diagnostics, "neighbor_min", 0))
+        if n_fluid == 0:
             stability = "fail"
-        elif diagnostics.neigh_min < max(1, neighbor_tol // 2):
+        elif neigh_min < max(1, neighbor_tol // 2):
             stability = "fail"
         elif density_error_mean > rho_tol * 1.5:
             stability = "fail"
-        elif density_error_mean > rho_tol or diagnostics.neigh_min < neighbor_tol:
+        elif density_error_mean > rho_tol or neigh_min < neighbor_tol:
             stability = "warn"
         else:
             stability = "pass"
@@ -55,8 +57,10 @@ class ValidationReport:
         return (
             f"[{self.stability.upper()}] step={diag.step} dt={diag.dt:.3e} "
             f"rho(avg)={diag.rho_mean:.2f} err%={self.density_error_mean * 100.0:.2f} "
-            f"neighbors={diag.neigh_min}/{diag.neigh_mean:.1f}/{diag.neigh_max} "
-            f"|v|max={diag.v_max:.3f}"
+            f"neighbors={getattr(diag,'neighbor_min',getattr(diag,'neigh_min',0))}/"
+            f"{getattr(diag,'neighbor_mean',getattr(diag,'neigh_mean',0.0)):.1f}/"
+            f"{getattr(diag,'neighbor_max',getattr(diag,'neigh_max',0))} "
+            f"|v|max={getattr(diag,'velocity_max',getattr(diag,'v_max',0.0)):.3f}"
         )
 
     def to_dict(self) -> dict:
@@ -76,14 +80,14 @@ class ValidationReport:
             "rho_min": float(diag.rho_min),
             "rho_mean": float(diag.rho_mean),
             "rho_max": float(diag.rho_max),
-            "rho_rel_err_mean": float(diag.rho_rel_err_mean),
-            "p_min": float(diag.p_min),
-            "p_mean": float(diag.p_mean),
-            "p_max": float(diag.p_max),
-            "neighbor_min": int(diag.neigh_min),
-            "neighbor_mean": float(diag.neigh_mean),
-            "neighbor_max": int(diag.neigh_max),
-            "velocity_max": float(diag.v_max),
+            "rho_error_mean": float(diag.rho_error_mean),
+            "p_min": float(getattr(diag, "pressure_min", getattr(diag, "p_min", 0.0))),
+            "p_mean": float(getattr(diag, "pressure_mean", getattr(diag, "p_mean", 0.0))),
+            "p_max": float(getattr(diag, "pressure_max", getattr(diag, "p_max", 0.0))),
+            "neighbor_min": int(getattr(diag, "neighbor_min", getattr(diag, "neigh_min", 0))),
+            "neighbor_mean": float(getattr(diag, "neighbor_mean", getattr(diag, "neigh_mean", 0.0))),
+            "neighbor_max": int(getattr(diag, "neighbor_max", getattr(diag, "neigh_max", 0))),
+            "velocity_max": float(getattr(diag, "velocity_max", getattr(diag, "v_max", 0.0))),
             "density_error_mean": float(self.density_error_mean),
             "stability": self.stability,
             "velocity_profile": profile_dict,

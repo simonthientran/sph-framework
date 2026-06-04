@@ -356,13 +356,25 @@ def run_comparison(
         Structured pass/fail report.
     """
     from sph.core.simulation import SimulationRunner  # lazy — avoids circular import
+    from sph.core.backends import NumbaCPUBackend
+    try:
+        from sph.core.backends.numba_cuda_backend import NumbaCUDABackend
+    except Exception:
+        NumbaCUDABackend = None  # type: ignore[assignment,misc]
+
+    def _backend_factory(name: str):
+        if name in ("numba_cpu", "cpu"):
+            return NumbaCPUBackend
+        if NumbaCUDABackend is not None and name in ("numba_cuda", "cuda"):
+            return NumbaCUDABackend
+        return NumbaCPUBackend
 
     scene_path = Path(scene_path)
     notes: list[str] = []
     total_steps = warmup_steps + steps
 
     # --- run CPU backend ---------------------------------------------------
-    cpu_runner = SimulationRunner(scene_path, backend_name=cpu_backend)
+    cpu_runner = SimulationRunner(scene_path, backend_factory=_backend_factory(cpu_backend))
     cpu_ms_samples: list[float] = []
 
     for i in range(total_steps):
@@ -381,7 +393,7 @@ def run_comparison(
         if suppress_warnings:
             warnings.filterwarnings("ignore")
 
-        cuda_runner = SimulationRunner(scene_path, backend_name=cuda_backend)
+        cuda_runner = SimulationRunner(scene_path, backend_factory=_backend_factory(cuda_backend))
         cuda_ms_samples: list[float] = []
 
         for i in range(total_steps):

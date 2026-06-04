@@ -68,6 +68,10 @@ class RuntimeStats:
     solver_metrics: Dict[str, float] = field(default_factory=dict)
     reynolds_number: float = 0.0
     regime: str = "LAMINAR"
+    density_summary: object = None
+    solver_health_summary: str = ""
+    solver_health_notes: list = field(default_factory=list)
+    interior_rel_err: float = 0.0
 
 
 @dataclass(slots=True)

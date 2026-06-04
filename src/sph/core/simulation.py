@@ -59,7 +59,17 @@ class RollingPerformanceTracker:
 class SimulationRunner:
     """Thin wrapper around a backend to provide a stable app-facing API."""
 
-    def __init__(self, scene_path: Path, backend_factory: BackendFactory | None = None):
+    def __init__(self, scene_path: Path, backend_factory: BackendFactory | None = None,
+                 backend_name: str | None = None):
+        if backend_factory is None and backend_name is not None:
+            if backend_name in ("numba_cuda", "cuda"):
+                try:
+                    from sph.core.backends.numba_cuda_backend import NumbaCUDABackend
+                    backend_factory = NumbaCUDABackend
+                except Exception:
+                    backend_factory = NumbaCPUBackend
+            else:
+                backend_factory = NumbaCPUBackend
         self.backend_factory = backend_factory or NumbaCPUBackend
         self._scene_path = Path(scene_path)
         self._perf_tracker = RollingPerformanceTracker()
