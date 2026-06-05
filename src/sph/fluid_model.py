@@ -49,6 +49,7 @@ class FluidModel:
         self.k_dfsph   = np.zeros(n_particles, dtype=np.float64)  # DFSPH stiffness factor
         self.p_cd_prev = np.zeros(n_particles, dtype=np.float64)  # DFSPH warm-start (const density)
         self.p_df_prev = np.zeros(n_particles, dtype=np.float64)  # DFSPH warm-start (div-free)
+        self.p_physical = np.zeros(n_particles, dtype=np.float64)  # EOS pressure max(k*(rho-rho0),0)
         self.rho_self = np.zeros(n_particles, dtype=np.float64)
         self.rho_ff = np.zeros(n_particles, dtype=np.float64)
         self.rho_fb = np.zeros(n_particles, dtype=np.float64)

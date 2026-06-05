@@ -99,26 +99,33 @@ def validate_elbow_industrial(
     bend = ((pos[:, 0] > 0.30) & (pos[:, 0] < 0.45) & (np.abs(pos[:, 1]) < 0.08))
     sec_final = float(np.linalg.norm(vel[bend, 1:], axis=1).mean()) if bend.sum() > 5 else 0.0
 
-    # ── EOS K-factor (diagnostic only) ──────────────────────────────────────
-    # Physical pressure from EOS: p = eos_k*(rho-rho0)/rho0
-    # Spatial gradient dp/dx in horizontal arm via regression
-    h_straight = (pos[:, 0] > 0.03) & (pos[:, 0] < 0.35) & \
-                 (np.sqrt(pos[:, 1] ** 2 + pos[:, 2] ** 2) < R * 0.85)
+    # ── EOS K-factor from p_physical (Tait EOS snapshot) ─────────────────────
+    # p_physical = eos_k*((rho/rho0)^7 - 1), stored in fluid.p_physical
+    # by dfsph._update_fluid_pressure() before each PPE correction.
+    # Note: K is reliable only at step with Re>11.6 AND rho>rho0 everywhere
+    # (full pressurisation). Open-ended elbow geometry causes clipping near
+    # open ends (rho<rho0 → p_physical=0), making dp unreliable.
+    p_phys = getattr(fl, 'p_physical', None)
     K_diag = float('nan')
     dp_dx_sim = float('nan')
-    if h_straight.sum() >= 6:
-        xs    = pos[h_straight, 0]
-        rhos  = fl.densities[h_straight]
-        ps    = eos_k * (rhos - rho0) / rho0
-        if xs.max() - xs.min() > 0.05:
-            c     = np.polyfit(xs, ps, 1)
-            dp_dx_sim = float(c[0])
-            dp_dx_theory = -rho0 * gx  # Pa/m
-            vmean   = float(vel[h_straight, 0].mean())
-            q       = 0.5 * rho0 * vmean ** 2
-            L_arm   = float(xs.max() - xs.min())
-            dp_bend = (dp_dx_sim - dp_dx_theory) * L_arm
-            K_diag  = float(dp_bend / (q + 1e-10)) if q > 1e-6 else float('nan')
+    if p_phys is not None:
+        inlet_mask_k  = pos[:, 0] < 0.08
+        outlet_mask_k = pos[:, 1] > 0.32
+        if inlet_mask_k.sum() >= 5 and outlet_mask_k.sum() >= 5:
+            p_in  = float(p_phys[inlet_mask_k].mean())
+            p_out = float(p_phys[outlet_mask_k].mean())
+            dp    = p_in - p_out
+            h_vel = vel[pos[:, 0] < 0.15, 0]
+            vmean = float(h_vel.mean()) if len(h_vel) > 0 else 0.0
+            q     = 0.5 * rho0 * vmean ** 2
+            mu    = nu * rho0
+            dp_f  = 32 * mu * 0.8 * abs(vmean) / (D ** 2)
+            dp_b  = dp - dp_f
+            K_diag = float(dp_b / (q + 1e-10)) if q > 1e-6 else float('nan')
+            rho_in  = float(fl.densities[inlet_mask_k].mean())
+            rho_out = float(fl.densities[outlet_mask_k].mean())
+    else:
+        rho_in = rho_out = 0.0
 
     print()
     print(f"{'─'*60}")
@@ -133,12 +140,16 @@ def validate_elbow_industrial(
     print(f"  Dean vortex: {'YES ✓' if dean_yes else 'NO ✗'}  "
           f"(threshold 0.01 m/s; sharp elbow De→∞)")
     print()
-    print(f"  K_sim (EOS diag)      = {K_diag:.3f}"
-          if not np.isnan(K_diag) else "  K_sim (EOS diag)      = n/a")
-    print(f"  K_ref (Idelchik)      = 0.5 – 3.0  (laminar 90° sharp elbow)")
     if not np.isnan(K_diag):
+        print(f"  K_sim (p_physical)    = {K_diag:.3f}  "
+              f"(rho_in={rho_in:.2f} rho_out={rho_out:.2f} kg/m³)")
+        print(f"  K_ref (Idelchik)      = 0.5 – 3.0  (laminar 90° sharp elbow)")
         print(f"  K in range            = {0.5 < K_diag < 3.0}")
-    print(f"  Note: K from DFSPH correction-p is not reliable in transient flow.")
+    else:
+        print(f"  K_sim (p_physical)    = n/a  (insufficient particles at inlet/outlet)")
+    print(f"  Note: p_physical = Tait EOS snapshot before PPE correction.")
+    print(f"  K requires rho>rho0 everywhere (full pressurisation) for reliability.")
+    print(f"  Open-ended elbow has rho<rho0 near open ends → Tait clips to 0.")
     print()
     print(f"  rho_err               = {rho_err:.2f}%")
     print(f"  NaN                   = {nan_f}")

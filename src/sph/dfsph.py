@@ -1272,3 +1272,5 @@ class DFSPHTimeStep(TimeStep):
 
     def _update_fluid_pressure(self, fluid: FluidModel) -> None:
         fluid.pressures[:] = self._pressure_from_density(fluid.densities, fluid.rho0)
+        # p_physical = EOS snapshot before PPE solver overwrites fluid.pressures
+        fluid.p_physical[:] = fluid.pressures

@@ -963,7 +963,7 @@ class Simulator:
         )
         fl.densities = np.concatenate([fl.densities, np.full(n_add, fl.rho0, dtype=np.float64)])
         fl.pressures = np.concatenate([fl.pressures, np.zeros(n_add, dtype=np.float64)])
-        for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "rho_self", "rho_ff", "rho_fb"):
+        for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "p_physical", "rho_self", "rho_ff", "rho_fb"):
             if hasattr(fl, attr):
                 setattr(fl, attr, np.concatenate(
                     [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]
