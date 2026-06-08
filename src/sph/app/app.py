@@ -13,8 +13,18 @@ from sph.app.main_window import MainWindow
 from sph.core.simulation import list_scene_files
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
 def _default_scene_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "scenes" / "examples"
+    return _repo_root() / "scenes" / "examples"
+
+
+def _default_scene_file() -> Path | None:
+    """Default scene shown on launch: the clean 90° elbow (round L-shape)."""
+    elbow = _repo_root() / "scenes" / "pipe_elbow_industrial.json"
+    return elbow if elbow.exists() else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         "--scene",
         type=Path,
         default=None,
-        help="Optional default scene file.",
+        help="Optional default scene file (defaults to the 90° elbow).",
     )
     args = parser.parse_args(argv)
 
@@ -38,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     if not scene_paths:
         raise SystemExit(f"No scenes found in {scene_dir}")
 
-    initial_scene = args.scene.resolve() if args.scene else None
+    # Default to the clean 90° elbow when no --scene is given.
+    initial_scene = args.scene.resolve() if args.scene else _default_scene_file()
     if initial_scene and initial_scene not in scene_paths:
         scene_paths.insert(0, initial_scene)
 
