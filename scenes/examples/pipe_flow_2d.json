@@ -36,7 +36,7 @@
   },
 
   "solver": {
-    "type": "wcsph",
+    "type": "dfsph",
     "eos_k": 8000.0,
     "pressure_clamp_min": 0.0,
     "density_diffusion": {

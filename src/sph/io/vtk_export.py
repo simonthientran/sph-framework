@@ -119,6 +119,43 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
             vx, vy, vz = vel3[i]
             f.write(f"{vx:.17g} {vy:.17g} {vz:.17g}\n")
 
+        # --- Debug fields (analysis aids for ParaView) -----------------------
+        fluid_mask_arr = (~state.is_boundary).astype(np.float64)
+        speed = np.linalg.norm(vel3, axis=1)
+        # Reference density from the fluid population (robust median); fall back
+        # to 1000 when no fluid particles are present.
+        fluid_rho = rho[~state.is_boundary]
+        rho0 = float(np.median(fluid_rho)) if fluid_rho.size else 1000.0
+        rho0 = rho0 if rho0 > 0.0 else 1000.0
+        density_deviation = (rho - rho0) / rho0
+        low_density_flag = (rho < 0.95 * rho0).astype(np.float64)
+        # Neighbour-derived diagnostics are not carried on ParticleState; emit
+        # zero-filled placeholders so downstream tooling finds the fields.
+        neighbor_count = np.zeros(n, dtype=np.float64)
+        low_neighbor_flag = np.zeros(n, dtype=np.float64)
+        # Free-surface score: low-density fluid particles score toward 1.
+        free_surface_score = np.clip(-density_deviation, 0.0, 1.0) * fluid_mask_arr
+        boundary_speed = speed * state.is_boundary.astype(np.float64)
+
+        def _write_scalar(name: str, values: np.ndarray) -> None:
+            f.write(f"SCALARS {name} float 1\n")
+            f.write("LOOKUP_TABLE default\n")
+            for val in values:
+                f.write(f"{float(val):.17g}\n")
+
+        _write_scalar("density_deviation", density_deviation)
+        _write_scalar("neighbor_count", neighbor_count)
+        _write_scalar("low_density_flag", low_density_flag)
+        _write_scalar("low_neighbor_flag", low_neighbor_flag)
+        _write_scalar("free_surface_score", free_surface_score)
+        _write_scalar("fluid_mask", fluid_mask_arr)
+        _write_scalar("boundary_speed", boundary_speed)
+
+        f.write("VECTORS debug_velocity float\n")
+        for i in range(n):
+            vx, vy, vz = vel3[i]
+            f.write(f"{vx:.17g} {vy:.17g} {vz:.17g}\n")
+
 
 def export_fluid_model_vtk(
     path: str | Path,

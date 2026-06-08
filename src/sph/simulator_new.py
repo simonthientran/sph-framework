@@ -218,6 +218,15 @@ class Simulator:
         self.current_step = 0
         self.t = 0.0
 
+        # Scene-level box emitters / outlets (optional). The modules parse the
+        # specs; the simulator applies them each step and reports metrics.
+        from sph.scene.emitters import load_box_emitters_from_scene
+        from sph.scene.outlets import load_box_outlets_from_scene
+        self._emitters = load_box_emitters_from_scene(self.scene, self.scene_path, self.dim)
+        self._outlets = load_box_outlets_from_scene(self.scene, self.scene_path, self.dim)
+        self._cumulative_emitted = 0
+        self._cumulative_removed = 0
+
         # Pressure probes (optional scene entries)
         self.probes: list[PressureProbe] = []
         self._probe_csv_path: Path | None = None
@@ -300,6 +309,11 @@ class Simulator:
 
         if fluid_type == "numpy_file":
             fluid_positions = self._load_numpy_positions(fluid_cfg["file"])
+        elif fluid_type in ("mesh_fill", "mesh_volume"):
+            from sph.scene.fluid_sources import load_fluid_particle_layout_from_scene
+            layout = load_fluid_particle_layout_from_scene(
+                self.scene, self.scene_path, self.dim)
+            fluid_positions = layout.positions
         elif fluid_cfg.get("sources"):
             blocks: list[np.ndarray] = []
             for src in fluid_cfg["sources"]:
@@ -861,6 +875,11 @@ class Simulator:
         if self._inlet_yz is not None:
             self._apply_inlet_outlet()
 
+        # Scene-level box emitters / outlets (applied on the current step index
+        # before it is incremented, so start_step/end_step gates align).
+        if self._emitters or self._outlets:
+            self._apply_emitters_outlets(stats)
+
         self.t += self.dt
         self.current_step += 1
 
@@ -969,6 +988,118 @@ class Simulator:
                     [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]
                 ))
         fl.n = len(fl.positions)
+
+    # Per-particle array names used when growing / shrinking the fluid set.
+    _FL_VEC_ATTRS = ("positions", "velocities", "accelerations")
+    _FL_SCL_ATTRS = ("densities", "pressures", "k_dfsph", "p_cd_prev",
+                     "p_df_prev", "p_physical", "rho_self", "rho_ff", "rho_fb")
+
+    def _fluid_remove(self, keep: np.ndarray) -> None:
+        """Keep only fluid particles where ``keep`` is True (compress arrays)."""
+        fl = self.fluid
+        for attr in self._FL_VEC_ATTRS:
+            setattr(fl, attr, getattr(fl, attr)[keep])
+        for attr in self._FL_SCL_ATTRS:
+            if hasattr(fl, attr):
+                setattr(fl, attr, getattr(fl, attr)[keep])
+        fl.n = len(fl.positions)
+
+    def _fluid_append(self, new_pos: np.ndarray, new_vel: np.ndarray) -> None:
+        """Append fresh fluid particles at rest density / zero pressure."""
+        fl = self.fluid
+        n_add = len(new_pos)
+        if n_add == 0:
+            return
+        fl.positions = np.vstack([fl.positions, new_pos])
+        fl.velocities = np.vstack([fl.velocities, new_vel])
+        fl.accelerations = np.vstack(
+            [fl.accelerations, np.zeros((n_add, fl.dim), dtype=np.float64)])
+        fl.densities = np.concatenate([fl.densities, np.full(n_add, fl.rho0, dtype=np.float64)])
+        fl.pressures = np.concatenate([fl.pressures, np.zeros(n_add, dtype=np.float64)])
+        for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "p_physical",
+                     "rho_self", "rho_ff", "rho_fb"):
+            if hasattr(fl, attr):
+                setattr(fl, attr, np.concatenate(
+                    [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]))
+        fl.n = len(fl.positions)
+
+    def _apply_emitters_outlets(self, stats: dict) -> None:
+        """Apply scene-level box emitters and outlets, recording metrics in stats."""
+        from sph.scene.emitters import build_emitter_slab_positions
+
+        fl = self.fluid
+        step = self.current_step
+
+        # --- Outlets first: remove exited particles so emitters can refill the
+        #     freed budget in the same step (steady transport cadence). ---
+        removed = 0
+        outlet_active = 0
+        for outlet in self._outlets:
+            if fl.n == 0:
+                break
+            pos = fl.positions
+            inside = np.all((pos[:, :self.dim] >= outlet.pmin) &
+                            (pos[:, :self.dim] <= outlet.pmax), axis=1)
+            if outlet.direction is not None:
+                # Direction gate: only remove particles moving outward.
+                vdot = fl.velocities[:, :self.dim] @ outlet.direction
+                inside &= vdot > 0.0
+            n_out = int(np.sum(inside))
+            if n_out == 0:
+                continue
+            self._fluid_remove(~inside)
+            removed += n_out
+            outlet_active += 1
+
+        # --- Emitters: inject fresh particles at inlet planes. ---
+        emitted = 0
+        emitter_active = 0
+        budget_blocked = 0
+        for em in self._emitters:
+            if not em.is_active_on_step(step):
+                continue
+            slab = build_emitter_slab_positions(em.spec, self.spacing)
+            if slab.shape[0] == 0:
+                continue
+            # max_active_fluid_particles budget gate
+            budget = em.spec.max_active_fluid_particles
+            if budget is not None and fl.n + slab.shape[0] > budget:
+                budget_blocked += 1
+                continue
+            # min_clearance gate: skip the whole slab if any existing fluid
+            # particle is closer than min_clearance * spacing to the slab plane.
+            if fl.n > 0 and em.spec.min_clearance > 0.0:
+                clearance = em.spec.min_clearance * self.spacing
+                axis = em.spec.dominant_axis
+                plane = float(slab[0, axis])
+                if np.any(np.abs(fl.positions[:, axis] - plane) < clearance):
+                    continue
+            new_vel = np.tile(em.spec.velocity.astype(np.float64), (slab.shape[0], 1))
+            self._fluid_append(slab.astype(np.float64), new_vel)
+            em.emitted_particles += slab.shape[0]
+            emitted += slab.shape[0]
+            emitter_active += 1
+
+        # The fluid particle set changed → stale neighbor pairs (built for the
+        # old indexing) must be discarded; they are rebuilt next step. This
+        # includes the time-step's cached pairs (reused at the next step start),
+        # otherwise a numba kernel writes out of bounds → heap corruption.
+        if emitted or removed:
+            fl.neighbor_pairs = None
+            if hasattr(self.time_step, "_cached_pairs"):
+                self.time_step._cached_pairs = None
+
+        self._cumulative_emitted += emitted
+        self._cumulative_removed += removed
+
+        stats["emitted_particles"] = float(emitted)
+        stats["emitter_active_count"] = float(emitter_active)
+        stats["emitter_budget_blocked_count"] = float(budget_blocked)
+        stats["cumulative_emitted_particles"] = float(self._cumulative_emitted)
+        stats["removed_particles"] = float(removed)
+        stats["outlet_active_count"] = float(outlet_active)
+        stats["cumulative_removed_particles"] = float(self._cumulative_removed)
+        stats["transport_particle_delta"] = float(emitted - removed)
 
     def _normalize_solver_stats(self, stats):
         if isinstance(stats, dict):

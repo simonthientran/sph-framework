@@ -236,7 +236,13 @@ class NumbaCPUBackend:
                 solver_metrics["iter_cd"] = float(stats_dict["iter_cd"])
             if "iter_df" in stats_dict:
                 solver_metrics["iter_df"] = float(stats_dict["iter_df"])
-            for key in ("rho_error_mean", "rho_error_max", "div_error_mean"):
+            for key in (
+                "rho_error_mean", "rho_error_max", "div_error_mean",
+                "emitted_particles", "emitter_active_count",
+                "emitter_budget_blocked_count", "cumulative_emitted_particles",
+                "removed_particles", "outlet_active_count",
+                "cumulative_removed_particles", "transport_particle_delta",
+            ):
                 if key in stats_dict:
                     solver_metrics[key] = float(stats_dict[key])
             solver_metrics["cd_converged"] = float(bool(stats_dict.get("cd_converged", True)))

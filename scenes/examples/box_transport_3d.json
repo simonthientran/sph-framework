@@ -56,7 +56,7 @@
       "type": "box",
       "name": "right_outflow",
       "min": [
-        0.78,
+        0.76,
         0.15,
         0.15
       ],
