@@ -11,7 +11,7 @@
     "type": "numpy_file",
     "file": "../assets/elbow_industrial/fluid.npy",
     "spacing": 0.015,
-    "initial_velocity": [0.25, 0.0, 0.0]
+    "initial_velocity": [0.0, 0.0, 0.0]
   },
 
   "domain": {
@@ -43,8 +43,8 @@
   },
 
   "forces": {
-    "gravity": [0.75, 0.0, 0.0],
-    "viscosity": { "enable": true, "nu": 0.001 },
+    "gravity": [0.003, 0.0, 0.0],
+    "viscosity": { "enable": true, "nu": 0.05 },
     "xsph": { "enable": false }
   },
 
@@ -57,7 +57,7 @@
     "mode": "cfl",
     "cfl": 0.4,
     "dt_min": 1.0e-6,
-    "dt_max": 0.002,
+    "dt_max": 0.0005,
     "steps": 3000
   },
 

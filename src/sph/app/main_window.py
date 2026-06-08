@@ -1110,27 +1110,31 @@ class MainWindow(QMainWindow):
         lbl_style = (f'color: {c["text_mid"]}; '
                      f'font-family: IBM Plex Mono, Consolas, monospace; '
                      f'font-size: 10px;')
-        self._lbl_cbar_max = QLabel('1.00')
+        self._lbl_cbar_max = QLabel('1.000')
         self._lbl_cbar_max.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._lbl_cbar_max.setStyleSheet(lbl_style)
 
-        self._colorbar_widget = pg.GraphicsLayoutWidget()
-        self._colorbar_widget.setFixedWidth(40)
-        self._colorbar_widget.setFixedHeight(180)
+        self._colorbar_widget = pg.PlotWidget()
+        self._colorbar_widget.setFixedWidth(60)
+        self._colorbar_widget.setFixedHeight(200)
+        self._colorbar_widget.hideAxis('bottom')
+        self._colorbar_widget.hideAxis('left')
         self._colorbar_widget.setBackground(pg.mkColor(8, 10, 15))
-        self._colorbar_plot = self._colorbar_widget.addPlot(row=0, col=0)
-        self._colorbar_plot.hideAxis('bottom')
-        self._colorbar_plot.hideAxis('left')
-        self._colorbar_plot.setAspectLocked(False)
+        self._colorbar_widget.setMouseEnabled(x=False, y=False)
+        self._colorbar_widget.setMenuEnabled(False)
         self._colorbar_img = pg.ImageItem()
-        self._colorbar_plot.addItem(self._colorbar_img)
+        self._colorbar_widget.addItem(self._colorbar_img)
+        # backwards-compat alias
+        self._cbar_item = self._colorbar_img
         self._refresh_colorbar_image()
 
-        self._lbl_cbar_min = QLabel('0.00')
+        self._lbl_cbar_min = QLabel('0.000')
         self._lbl_cbar_min.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._lbl_cbar_min.setStyleSheet(lbl_style)
 
         labels = QVBoxLayout()
+        labels.setContentsMargins(0, 0, 0, 0)
+        labels.setSpacing(2)
         labels.addWidget(self._lbl_cbar_max)
         labels.addStretch()
         labels.addWidget(self._lbl_cbar_min)
@@ -1139,16 +1143,26 @@ class MainWindow(QMainWindow):
         return container
 
     def _refresh_colorbar_image(self) -> None:
+        """Build a vertical gradient bar (1 px wide × 256 px tall, low→high)."""
         name = self._combo_colormap.currentText()
         fn = _CMAP_FNS.get(name, _turbo)
-        t = np.linspace(1.0, 0.0, 256)
+        n = 256
+        t = np.linspace(0.0, 1.0, n)  # bottom = low, top = high
         r, g, b = fn(t)
-        img = np.zeros((256, 10, 3), dtype=np.uint8)
-        img[:, :, 0] = (r * 255).astype(np.uint8)[:, None]
-        img[:, :, 1] = (g * 255).astype(np.uint8)[:, None]
-        img[:, :, 2] = (b * 255).astype(np.uint8)[:, None]
+        img = np.zeros((1, n, 4), dtype=np.uint8)
+        img[0, :, 0] = (r * 255).astype(np.uint8)
+        img[0, :, 1] = (g * 255).astype(np.uint8)
+        img[0, :, 2] = (b * 255).astype(np.uint8)
+        img[0, :, 3] = 255
         self._colorbar_img.setImage(img)
-        self._colorbar_plot.setRange(xRange=(0, 10), yRange=(0, 256), padding=0)
+        # Map the 1×256 image to fill the plot: x∈[0,1], y∈[0,256]
+        self._colorbar_img.setRect(0.0, 0.0, 1.0, float(n))
+        self._colorbar_widget.setXRange(0.0, 1.0, padding=0)
+        self._colorbar_widget.setYRange(0.0, float(n), padding=0)
+
+    def _rebuild_colorbar(self, *_args) -> None:
+        """Rebuild gradient when colormap selection changes."""
+        self._refresh_colorbar_image()
 
     def _on_colormap_changed(self, _text: str) -> None:
         self._refresh_colorbar_image()
