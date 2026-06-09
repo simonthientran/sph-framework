@@ -25,6 +25,33 @@ class SimulationStateView:
     boundary_velocities: np.ndarray
     domain_min: np.ndarray
     domain_max: np.ndarray
+    fluid_rho0: float = 1000.0
+
+    # --- Derived render fields (computed from the snapshot above) ------------
+    @property
+    def fluid_density_deviation(self) -> np.ndarray:
+        """Relative density deviation (rho - rho0) / rho0 per fluid particle."""
+        rho0 = self.fluid_rho0 if self.fluid_rho0 > 0.0 else 1000.0
+        return (self.fluid_density - rho0) / rho0
+
+    @property
+    def fluid_low_density_mask(self) -> np.ndarray:
+        rho0 = self.fluid_rho0 if self.fluid_rho0 > 0.0 else 1000.0
+        return (self.fluid_density < 0.95 * rho0).astype(np.float64)
+
+    @property
+    def fluid_free_surface_score(self) -> np.ndarray:
+        return np.clip(-self.fluid_density_deviation, 0.0, 1.0)
+
+    @property
+    def fluid_neighbor_counts(self) -> np.ndarray:
+        # Neighbour counts are not carried on the render snapshot; expose a
+        # zero-filled array of the correct length so render code can bind it.
+        return np.zeros(self.fluid_density.shape[0], dtype=np.float64)
+
+    @property
+    def fluid_low_neighbor_mask(self) -> np.ndarray:
+        return np.zeros(self.fluid_density.shape[0], dtype=np.float64)
 
 
 @dataclass(slots=True)

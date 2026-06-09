@@ -27,6 +27,7 @@ class NumbaCPUBackend:
         self.sim: Simulator | None = None
         self._domain_min = np.zeros(2, dtype=np.float64)
         self._domain_max = np.ones(2, dtype=np.float64)
+        self._last_stats: RuntimeStats | None = None
         self.load_scene(self.scene_path)
 
     # ------------------------------------------------------------------ properties
@@ -84,7 +85,9 @@ class NumbaCPUBackend:
         start = time.perf_counter()
         self.sim.step()
         wall_time_ms = (time.perf_counter() - start) * 1000.0
-        return self._build_stats(wall_time_ms)
+        stats = self._build_stats(wall_time_ms)
+        self._last_stats = stats
+        return stats
 
     def state_view(self) -> SimulationStateView:
         if self.sim is None:
@@ -115,6 +118,7 @@ class NumbaCPUBackend:
             boundary_velocities=boundary_vel,
             domain_min=self._domain_min.copy(),
             domain_max=self._domain_max.copy(),
+            fluid_rho0=float(fluid.rho0),
         )
 
     def particle_state(self) -> ParticleState:

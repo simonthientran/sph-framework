@@ -32,7 +32,7 @@ def runtime_stats_to_playback_dict(stats: RuntimeStats) -> dict:
     return {
         "step": int(stats.step),
         "dt": float(stats.dt),
-        "backend_name": stats.backend_name,
+        "backend_name": getattr(stats, "backend_name", ""),
         "solver": stats.solver,
         "scene_name": stats.scene_name,
         "velocity_max": float(stats.velocity_max),

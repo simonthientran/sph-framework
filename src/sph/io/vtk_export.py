@@ -143,6 +143,7 @@ def export_particles_vtk_legacy(path: str | Path, state: ParticleState) -> None:
             for val in values:
                 f.write(f"{float(val):.17g}\n")
 
+        _write_scalar("particle_speed", speed)
         _write_scalar("density_deviation", density_deviation)
         _write_scalar("neighbor_count", neighbor_count)
         _write_scalar("low_density_flag", low_density_flag)

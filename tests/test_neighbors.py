@@ -5,17 +5,18 @@ from sph.neighbors.spatial_hash import SpatialHash
 
 def test_neighbor_query_only_returns_particles_within_support_radius():
     """
-    Neighbor search should only return particles within distance <= h
-    (compact support neighborhood assumption used throughout the tutorial).
+    Neighbor search should only return particles within the kernel support,
+    i.e. distance <= 2*h for the cubic spline (diagonal neighbours at sqrt(2)*h
+    are physically inside support). SpatialHash uses a 2*support_radius cutoff.
     """
     dim = 2
     h = 1.0
 
-    # 3 points: p0 at origin, p1 within radius, p2 outside radius
+    # 3 points: p0 at origin, p1 within 2*h support, p2 outside 2*h support
     pos = np.array([
         [0.0, 0.0],
         [0.5, 0.0],
-        [2.0, 0.0],
+        [2.5, 0.0],
     ], dtype=np.float64)
 
     ns = SpatialHash(support_radius=h, dim=dim)

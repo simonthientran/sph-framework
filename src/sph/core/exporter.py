@@ -105,5 +105,11 @@ class ExportManager:
         path = self.settings.vtk.directory / filename
         path.parent.mkdir(parents=True, exist_ok=True)
         export_particles_vtk_legacy(path, state)
+        # Write a per-frame diagnostics sidecar (.json) when runtime stats are
+        # available (i.e. after at least one step); the playback viewer reads it.
+        last_stats = getattr(backend, "_last_stats", None)
+        if last_stats is not None:
+            from sph.io.playback_diagnostics import export_playback_diagnostics
+            export_playback_diagnostics(path.with_suffix(".json"), last_stats)
         self._last_export_step["vtk"] = step
         return path
