@@ -869,10 +869,13 @@ class MainWindow(QMainWindow):
         self._combo_colormap.currentTextChanged.connect(self._on_colormap_changed)
         vg.addWidget(self._combo_colormap, 1, 1)
 
+        # Particle-size multiplier 0.5x–2.0x (slider int 5–20 → /10), default 1.0x
         vg.addWidget(QLabel('Particle size:'), 2, 0)
         self._slider_size = QSlider(Qt.Orientation.Horizontal)
-        self._slider_size.setRange(1, 20)
-        self._slider_size.setValue(6)
+        self._slider_size.setRange(5, 20)
+        self._slider_size.setValue(10)
+        self._slider_size.setToolTip('Particle size multiplier (0.5x – 2.0x)')
+        self._slider_size.valueChanged.connect(self._on_size_changed)
         vg.addWidget(self._slider_size, 2, 1)
         layout.addWidget(vis_grp)
 
@@ -897,7 +900,8 @@ class MainWindow(QMainWindow):
 
         pg.setConfigOptions(antialias=True)
         self.gl_widget = gl.GLViewWidget()
-        self.gl_widget.setBackgroundColor(pg.mkColor(8, 10, 15))
+        # Part D: keep viewport background dark (#0a0d14) in dark mode
+        self.gl_widget.setBackgroundColor(pg.mkColor(10, 13, 20))
         self.gl_widget.setCameraPosition(distance=3.5, elevation=25, azimuth=45)
 
         grid = gl.GLGridItem()
@@ -906,20 +910,32 @@ class MainWindow(QMainWindow):
         grid.setSpacing(0.1, 0.1)
         self.gl_widget.addItem(grid)
 
+        # Part C: industrial fluid look — real-world particle size (pxMode=False
+        # gives depth scaling), translucent edges, depth test so near particles
+        # occlude far ones. Size is set per-frame from the scene spacing.
         self._scatter = gl.GLScatterPlotItem(
             pos=np.zeros((1, 3), dtype=np.float32),
-            size=6.0,
-            color=(0.0, 0.83, 1.0, 0.9),
-            pxMode=True)
-        self._scatter.setGLOptions('additive')
+            size=0.016,
+            color=(0.0, 0.83, 1.0, 0.95),
+            pxMode=False)
+        self._scatter.setGLOptions('translucent')
+        try:
+            self._scatter.setData(antialias=True)
+        except Exception:
+            pass
         self.gl_widget.addItem(self._scatter)
 
+        # Boundary wall: faint, smaller, gray — visible but not dominant.
         self._boundary_scatter = gl.GLScatterPlotItem(
             pos=np.zeros((1, 3), dtype=np.float32),
-            size=2.0,
-            color=(0.12, 0.16, 0.25, 0.15),
-            pxMode=True)
+            size=0.008,
+            color=(0.45, 0.50, 0.60, 0.10),
+            pxMode=False)
+        self._boundary_scatter.setGLOptions('translucent')
         self.gl_widget.addItem(self._boundary_scatter)
+
+        # Default real-world particle radius (updated on scene load).
+        self._particle_world_size = 0.016
 
         layout.addWidget(self.gl_widget)
         layout.addWidget(self._build_playback_bar())
@@ -1173,17 +1189,28 @@ class MainWindow(QMainWindow):
             self._scatter.setData(
                 pos=fl.positions.astype(np.float32), color=colors)
 
+    def _on_size_changed(self, _v: int) -> None:
+        """Live-update particle size when the multiplier slider moves."""
+        if self.runner is not None:
+            self._scatter.setData(size=self._particle_size_world())
+
     def _apply_colormap(self, values: np.ndarray, mode: str) -> np.ndarray:
         n = len(values)
-        vmax = float(np.percentile(values, 95)) if n else 1.0
-        vmin = float(values.min()) if n else 0.0
+        # Part B: clamp the colour scale to the 99th percentile so a lone
+        # outlier particle never washes out the field. nan-safe.
+        if n:
+            finite = values[np.isfinite(values)]
+            vmax = float(np.percentile(finite, 99)) if finite.size else 1.0
+            vmin = float(finite.min()) if finite.size else 0.0
+        else:
+            vmax, vmin = 1.0, 0.0
         self._colorbar_vmin = vmin
         self._colorbar_vmax = vmax
-        t = np.clip((values - vmin) / (vmax - vmin + 1e-10), 0, 1)
+        t = np.clip((np.nan_to_num(values) - vmin) / (vmax - vmin + 1e-10), 0, 1)
         fn = _CMAP_FNS.get(mode, _turbo)
         r, g, b = fn(t)
         colors = np.zeros((n, 4), dtype=np.float32)
-        colors[:, 0] = r; colors[:, 1] = g; colors[:, 2] = b; colors[:, 3] = 0.92
+        colors[:, 0] = r; colors[:, 1] = g; colors[:, 2] = b; colors[:, 3] = 0.95
         return colors
 
     def _particle_colors(
@@ -1219,7 +1246,7 @@ class MainWindow(QMainWindow):
             self._act_theme.setText('Light Mode')
             self._theme_btn.setText('☀')
             self.setStyleSheet(build_stylesheet('dark'))
-            self.gl_widget.setBackgroundColor(pg.mkColor(8, 10, 15))
+            self.gl_widget.setBackgroundColor(pg.mkColor(10, 13, 20))
             plot_bg = pg.mkColor(8, 10, 15)
             cbar_bg = pg.mkColor(8, 10, 15)
 
@@ -1249,7 +1276,10 @@ class MainWindow(QMainWindow):
         bd = getattr(self.runner.backend.sim, 'boundary', None)
         if bd is None or not hasattr(bd, 'positions') or len(bd.positions) == 0:
             return
-        self._boundary_scatter.setData(pos=bd.positions.astype(np.float32))
+        # Faint, smaller wall particles (~0.5x the fluid world size).
+        bsize = 0.5 * getattr(self, '_particle_world_size', 0.016)
+        self._boundary_scatter.setData(
+            pos=bd.positions.astype(np.float32), size=bsize)
         self._boundary_scatter.setVisible(self._show_boundary)
 
     def _load_scene(self, path: str):
@@ -1261,9 +1291,16 @@ class MainWindow(QMainWindow):
             fl = self.runner.backend.sim.fluid
             bd = self.runner.backend.sim.boundary
 
+            # Part C: real-world particle size = 1.6 * particle spacing so
+            # particles nearly touch like a filled fluid (fallback 0.01).
+            spacing = self._scene_spacing(fl)
+            self._particle_world_size = 1.6 * spacing
+
             self._update_boundary_display()
             if fl.n > 0:
-                self._scatter.setData(pos=fl.positions.astype(np.float32))
+                self._scatter.setData(
+                    pos=fl.positions.astype(np.float32),
+                    size=self._particle_size_world())
 
             n_bd = len(bd.positions) if bd is not None and hasattr(bd, 'positions') else 0
             if (bd is not None and hasattr(bd, 'positions')
@@ -1280,8 +1317,54 @@ class MainWindow(QMainWindow):
             self._sb_scene.setText(f'  {Path(path).name}')
             self._history = {k: [] for k in self._history}
 
+            # Part D: auto-frame camera to fit all particles.
+            self._auto_frame_camera(fl, bd)
+
         except Exception as e:
             self._log_msg(f'ERROR: {e}', error=True)
+
+    def _scene_spacing(self, fluid) -> float:
+        """Particle spacing from scene config, falling back to fluid.h or 0.01."""
+        try:
+            scene = self.runner.backend.sim.scene
+            fcfg = scene.get('fluid') or (scene.get('fluids') or [{}])[0]
+            sp = fcfg.get('spacing')
+            if sp is not None and float(sp) > 0.0:
+                return float(sp)
+        except Exception:
+            pass
+        h = getattr(fluid, 'h', 0.0)
+        return float(h) if h and h > 0.0 else 0.01
+
+    def _particle_size_world(self) -> float:
+        """World particle size scaled by the size-multiplier slider (0.5x–2.0x)."""
+        mult = self._slider_size.value() / 10.0
+        return self._particle_world_size * mult
+
+    def _auto_frame_camera(self, fluid, boundary) -> None:
+        """Set camera distance/centre from the particle bounding-box diagonal."""
+        pts = []
+        if fluid is not None and getattr(fluid, 'n', 0) > 0:
+            pts.append(fluid.positions)
+        if (boundary is not None and hasattr(boundary, 'positions')
+                and len(boundary.positions) > 0):
+            pts.append(boundary.positions)
+        if not pts:
+            return
+        allp = np.vstack(pts)
+        finite = allp[np.isfinite(allp).all(axis=1)]
+        if finite.shape[0] == 0:
+            return
+        pmin = finite.min(axis=0)
+        pmax = finite.max(axis=0)
+        center = 0.5 * (pmin + pmax)
+        diag = float(np.linalg.norm(pmax - pmin))
+        if finite.shape[1] == 2:
+            center = np.array([center[0], center[1], 0.0])
+        from pyqtgraph import Vector
+        self.gl_widget.opts['center'] = Vector(float(center[0]), float(center[1]), float(center[2]))
+        self.gl_widget.setCameraPosition(
+            distance=max(diag * 1.4, 0.1), elevation=25, azimuth=45)
 
     def _run(self):
         if not self.runner:
@@ -1385,16 +1468,27 @@ class MainWindow(QMainWindow):
         self._curve_profile_ana.setData(r_centers, vx_ana)
 
     def _on_step(self, m: dict):
-        speeds = m['speeds']
-        colors = self._particle_colors(speeds)
-        base_size = float(self._slider_size.value())
-        if len(speeds) > 0:
-            slow = float(np.percentile(speeds, 10))
-            sizes = np.where(speeds < slow, 3.0, 6.0) * (base_size / 6.0)
+        positions = np.asarray(m['positions'], dtype=np.float32)
+        speeds = np.asarray(m['speeds'], dtype=np.float64)
+
+        # Part B: display-only safety guard. Drop any non-finite particle so a
+        # single bad value never crashes the view or autoscales the colour map.
+        finite_mask = np.isfinite(positions).all(axis=1)
+        if speeds.shape[0] == positions.shape[0]:
+            finite_mask &= np.isfinite(speeds)
+        if not finite_mask.all():
+            positions = positions[finite_mask]
+            speeds = speeds[finite_mask]
+
+        if positions.shape[0] == 0:
+            self._scatter.setData(pos=np.zeros((0, 3), dtype=np.float32))
         else:
-            sizes = base_size
-        self._scatter.setData(
-            pos=m['positions'].astype(np.float32), color=colors, size=sizes)
+            # Colour scale clipped to the 99th percentile so lone outliers do
+            # not wash out the field (display only — physics state untouched).
+            colors = self._particle_colors(speeds)
+            size_world = self._particle_size_world()
+            self._scatter.setData(
+                pos=positions, color=colors, size=size_world)
         self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
         self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
 

@@ -44,7 +44,7 @@
 
   "forces": {
     "gravity": [0.003, 0.0, 0.0],
-    "viscosity": { "enable": true, "nu": 0.05 },
+    "viscosity": { "enable": true, "nu": 0.10 },
     "xsph": { "enable": false }
   },
 
