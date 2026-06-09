@@ -631,6 +631,12 @@ class MainWindow(QMainWindow):
         self._fps = 0.0
         self._colorbar_vmin = 0.0
         self._colorbar_vmax = 1.0
+        # Part A: clipping plane (display-only section through the fluid).
+        self._clip_axis: int | None = None      # None / 0=X / 1=Y / 2=Z
+        self._clip_frac: float = 1.0             # slider fraction 0..1
+        self._fluid_bbox: tuple[np.ndarray, np.ndarray] | None = None
+        # Part B: inlet/outlet markers.
+        self._show_io_markers = True
 
         self.setWindowTitle('SPH Framework  —  Professional Edition')
         self.resize(1600, 950)
@@ -887,7 +893,32 @@ class MainWindow(QMainWindow):
         self._chk_vectors.setToolTip('Overlay short velocity arrows at the bend')
         self._chk_vectors.toggled.connect(self._on_vectors_toggled)
         vg.addWidget(self._chk_vectors, 3, 0, 1, 2)
+
+        # Part B: inlet/outlet markers toggle.
+        self._chk_io = QCheckBox('Show inlet/outlet')
+        self._chk_io.setChecked(True)
+        self._chk_io.setToolTip('Green INLET ring + red OUTLET ring')
+        self._chk_io.toggled.connect(self._on_io_toggled)
+        vg.addWidget(self._chk_io, 4, 0, 1, 2)
         layout.addWidget(vis_grp)
+
+        # Part A: clipping plane (StarCCM-style section through the fluid).
+        clip_grp = QGroupBox('CLIP')
+        cg = QGridLayout(clip_grp)
+        cg.setSpacing(6)
+        cg.addWidget(QLabel('Axis:'), 0, 0)
+        self._combo_clip = QComboBox()
+        self._combo_clip.addItems(['Off', 'X', 'Y', 'Z'])
+        self._combo_clip.currentTextChanged.connect(self._on_clip_axis_changed)
+        cg.addWidget(self._combo_clip, 0, 1)
+        cg.addWidget(QLabel('Position:'), 1, 0)
+        self._slider_clip = QSlider(Qt.Orientation.Horizontal)
+        self._slider_clip.setRange(0, 100)
+        self._slider_clip.setValue(100)
+        self._slider_clip.setToolTip('Plane position across the fluid bbox (keeps the lower side)')
+        self._slider_clip.valueChanged.connect(self._on_clip_pos_changed)
+        cg.addWidget(self._slider_clip, 1, 1)
+        layout.addWidget(clip_grp)
 
         layout.addStretch()
 
@@ -958,9 +989,101 @@ class MainWindow(QMainWindow):
         self._flow_vectors.setVisible(False)
         self.gl_widget.addItem(self._flow_vectors)
 
-        layout.addWidget(self.gl_widget)
+        # Part B: inlet (green) and outlet (red) ring markers + text labels.
+        self._inlet_ring = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), dtype=np.float32),
+            color=(0.0, 0.9, 0.35, 0.95), width=2.5, mode='line_strip', antialias=True)
+        self._inlet_ring.setGLOptions('translucent')
+        self._inlet_ring.setVisible(False)
+        self.gl_widget.addItem(self._inlet_ring)
+        self._outlet_ring = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), dtype=np.float32),
+            color=(1.0, 0.25, 0.25, 0.95), width=2.5, mode='line_strip', antialias=True)
+        self._outlet_ring.setGLOptions('translucent')
+        self._outlet_ring.setVisible(False)
+        self.gl_widget.addItem(self._outlet_ring)
+        self._inlet_label = None
+        self._outlet_label = None
+        try:
+            self._inlet_label = gl.GLTextItem(pos=np.zeros(3), text='INLET', color=(0, 230, 90))
+            self._outlet_label = gl.GLTextItem(pos=np.zeros(3), text='OUTLET', color=(255, 70, 70))
+            self.gl_widget.addItem(self._inlet_label)
+            self.gl_widget.addItem(self._outlet_label)
+            self._inlet_label.setVisible(False)
+            self._outlet_label.setVisible(False)
+        except Exception:
+            self._inlet_label = self._outlet_label = None
+
+        # Part C: gl viewport + large colorbar docked at its right edge.
+        view_row = QWidget()
+        vr = QHBoxLayout(view_row)
+        vr.setContentsMargins(0, 0, 0, 0)
+        vr.setSpacing(0)
+        vr.addWidget(self.gl_widget, stretch=1)
+        vr.addWidget(self._build_big_colorbar())
+
+        layout.addWidget(view_row, stretch=1)
         layout.addWidget(self._build_playback_bar())
         return container
+
+    def _build_big_colorbar(self) -> QWidget:
+        """Tall vertical colorbar docked beside the 3D viewport (StarCCM look)."""
+        c = PALETTE['dark']
+        panel = QWidget()
+        panel.setFixedWidth(86)
+        panel.setStyleSheet(f'background: {c["bg_base"]};')
+        col = QVBoxLayout(panel)
+        col.setContentsMargins(6, 8, 8, 8)
+        col.setSpacing(4)
+
+        self._big_cbar_title = QLabel('Speed [m/s]')
+        self._big_cbar_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._big_cbar_title.setWordWrap(True)
+        self._big_cbar_title.setStyleSheet(
+            f'color: {c["accent"]}; font-size: 9px; font-weight: 700; letter-spacing: 1px;')
+        col.addWidget(self._big_cbar_title)
+
+        lbl_style = (f'color: {c["text_mid"]}; '
+                     f'font-family: IBM Plex Mono, Consolas, monospace; font-size: 9px;')
+        bar_row = QWidget()
+        br = QHBoxLayout(bar_row)
+        br.setContentsMargins(0, 0, 0, 0)
+        br.setSpacing(4)
+
+        # Stacked min/mid/max labels at the right of the bar.
+        labels = QVBoxLayout()
+        labels.setContentsMargins(0, 0, 0, 0)
+        labels.setSpacing(0)
+        self._big_cbar_max = QLabel('1.000')
+        self._big_cbar_mid = QLabel('0.500')
+        self._big_cbar_min = QLabel('0.000')
+        for lb in (self._big_cbar_max, self._big_cbar_mid, self._big_cbar_min):
+            lb.setStyleSheet(lbl_style)
+            lb.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        labels.addWidget(self._big_cbar_max)
+        labels.addStretch()
+        labels.addWidget(self._big_cbar_mid)
+        labels.addStretch()
+        labels.addWidget(self._big_cbar_min)
+
+        self._big_cbar_widget = pg.PlotWidget()
+        self._big_cbar_widget.setFixedWidth(28)
+        self._big_cbar_widget.hideAxis('bottom')
+        self._big_cbar_widget.hideAxis('left')
+        self._big_cbar_widget.setBackground(pg.mkColor(8, 10, 15))
+        self._big_cbar_widget.setMouseEnabled(x=False, y=False)
+        self._big_cbar_widget.setMenuEnabled(False)
+        self._big_cbar_img = pg.ImageItem()
+        self._big_cbar_widget.addItem(self._big_cbar_img)
+
+        br.addWidget(self._big_cbar_widget)
+        br.addLayout(labels)
+        # The bar fills ~all available height; spacers keep it ~60% if tall.
+        col.addStretch(1)
+        col.addWidget(bar_row, stretch=6)
+        col.addStretch(1)
+        self._refresh_colorbar_image()
+        return panel
 
     def _build_playback_bar(self) -> QWidget:
         c = PALETTE['dark']
@@ -1191,11 +1314,39 @@ class MainWindow(QMainWindow):
         img[0, :, 1] = (g * 255).astype(np.uint8)
         img[0, :, 2] = (b * 255).astype(np.uint8)
         img[0, :, 3] = 255
-        self._colorbar_img.setImage(img)
-        # Map the 1×256 image to fill the plot: x∈[0,1], y∈[0,256]
-        self._colorbar_img.setRect(0.0, 0.0, 1.0, float(n))
-        self._colorbar_widget.setXRange(0.0, 1.0, padding=0)
-        self._colorbar_widget.setYRange(0.0, float(n), padding=0)
+        for imgitem, widget in (
+            (getattr(self, '_colorbar_img', None), getattr(self, '_colorbar_widget', None)),
+            (getattr(self, '_big_cbar_img', None), getattr(self, '_big_cbar_widget', None)),
+        ):
+            if imgitem is None or widget is None:
+                continue
+            imgitem.setImage(img)
+            imgitem.setRect(0.0, 0.0, 1.0, float(n))
+            widget.setXRange(0.0, 1.0, padding=0)
+            widget.setYRange(0.0, float(n), padding=0)
+
+    def _color_by_label(self) -> str:
+        """Title (field + unit) for the active Color-by mode."""
+        return {
+            'Speed': 'Speed [m/s]',
+            'Secondary': 'Secondary [m/s]',
+            'Density error': 'ρ error',
+            'Pressure': 'Pressure',
+            'Solid color': 'Solid',
+        }.get(self._combo_color.currentText(), self._combo_color.currentText())
+
+    def _update_colorbar_labels(self) -> None:
+        """Sync both colorbars' min/mid/max labels and the big-bar title."""
+        vmin, vmax = self._colorbar_vmin, self._colorbar_vmax
+        vmid = 0.5 * (vmin + vmax)
+        if hasattr(self, '_lbl_cbar_min'):
+            self._lbl_cbar_min.setText(f'{vmin:.4f}')
+            self._lbl_cbar_max.setText(f'{vmax:.4f}')
+        if hasattr(self, '_big_cbar_min'):
+            self._big_cbar_min.setText(f'{vmin:.3f}')
+            self._big_cbar_mid.setText(f'{vmid:.3f}')
+            self._big_cbar_max.setText(f'{vmax:.3f}')
+            self._big_cbar_title.setText(self._color_by_label())
 
     def _rebuild_colorbar(self, *_args) -> None:
         """Rebuild gradient when colormap selection changes."""
@@ -1203,12 +1354,7 @@ class MainWindow(QMainWindow):
 
     def _on_colormap_changed(self, _text: str) -> None:
         self._refresh_colorbar_image()
-        if self.runner and self.runner.backend.sim.fluid.n > 0:
-            fl = self.runner.backend.sim.fluid
-            speeds = np.linalg.norm(fl.velocities, axis=1)
-            colors = self._particle_colors(speeds)
-            self._scatter.setData(
-                pos=fl.positions.astype(np.float32), color=colors)
+        self._rerender_current()
 
     def _on_size_changed(self, _v: int) -> None:
         """Live-update particle size when the multiplier slider moves."""
@@ -1219,17 +1365,9 @@ class MainWindow(QMainWindow):
         """Relabel the colorbar and re-render the current frame in the new mode."""
         if hasattr(self, '_cbar_grp'):
             self._cbar_grp.setTitle(f'COLORMAP SCALE · {mode.upper()}')
-        if self.runner is None or self.runner.backend.sim.fluid.n == 0:
-            return
-        fl = self.runner.backend.sim.fluid
-        pos = fl.positions.astype(np.float64)
-        vel = fl.velocities.astype(np.float64)
-        speeds = np.linalg.norm(vel, axis=1)
-        values = self._secondary_magnitude(pos, vel) if mode == 'Secondary' else None
-        colors = self._particle_colors(speeds, values)
-        self._scatter.setData(pos=pos.astype(np.float32), color=colors)
-        self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
-        self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
+        if hasattr(self, '_big_cbar_title'):
+            self._big_cbar_title.setText(self._color_by_label())
+        self._rerender_current()
 
     def _on_vectors_toggled(self, on: bool) -> None:
         """Show/hide the bend velocity-arrow overlay."""
@@ -1354,6 +1492,8 @@ class MainWindow(QMainWindow):
         for plot in (self._plot_vmax, self._plot_rho, self._plot_profile):
             plot.setBackground(plot_bg)
         self._colorbar_widget.setBackground(cbar_bg)
+        if hasattr(self, '_big_cbar_widget'):
+            self._big_cbar_widget.setBackground(cbar_bg)
 
         for w in (self._stat_vmax, self._stat_rho, self._stat_icd, self._stat_idf,
                   self._stat_dt, self._stat_n, self._stat_re, self._stat_fps):
@@ -1422,6 +1562,26 @@ class MainWindow(QMainWindow):
             if hasattr(self, '_flow_vectors'):
                 self._flow_vectors.setData(pos=np.zeros((2, 3), dtype=np.float32))
                 self._flow_vectors.setVisible(self._chk_vectors.isChecked())
+
+            # Part A: recompute clip bounds from the fluid bbox; reset to Off.
+            if fl.n > 0:
+                self._fluid_bbox = (fl.positions.min(0).copy(), fl.positions.max(0).copy())
+            else:
+                self._fluid_bbox = None
+            self._clip_axis = None
+            self._clip_frac = 1.0
+            if hasattr(self, '_combo_clip'):
+                self._combo_clip.blockSignals(True)
+                self._combo_clip.setCurrentText('Off')
+                self._combo_clip.blockSignals(False)
+                self._slider_clip.blockSignals(True)
+                self._slider_clip.setValue(100)
+                self._slider_clip.blockSignals(False)
+
+            # Part B: place inlet/outlet markers for this scene.
+            self._update_io_markers()
+            self._refresh_colorbar_image()
+            self._update_colorbar_labels()
 
             # Part D: auto-frame camera to fit all particles.
             self._auto_frame_camera(fl, bd)
@@ -1573,43 +1733,148 @@ class MainWindow(QMainWindow):
         self._curve_profile_sim.setData(r_centers, vx_mean)
         self._curve_profile_ana.setData(r_centers, vx_ana)
 
-    def _on_step(self, m: dict):
-        positions = np.asarray(m['positions'], dtype=np.float32)
-        speeds = np.asarray(m['speeds'], dtype=np.float64)
-        velocities = np.asarray(
-            m.get('velocities', np.zeros_like(positions)), dtype=np.float64)
+    # ── Part A: clip plane + unified fluid draw ───────────────────────────
+    def _clip_mask(self, positions: np.ndarray) -> np.ndarray:
+        """Keep-mask for the clipping plane (True = render). Keeps the lower
+        side: position[axis] <= plane_value. axis Off → keep all."""
+        n = positions.shape[0]
+        if self._clip_axis is None or self._fluid_bbox is None or n == 0:
+            return np.ones(n, dtype=bool)
+        ax = self._clip_axis
+        if ax >= positions.shape[1]:
+            return np.ones(n, dtype=bool)
+        lo = float(self._fluid_bbox[0][ax])
+        hi = float(self._fluid_bbox[1][ax])
+        plane = lo + self._clip_frac * (hi - lo)
+        return positions[:, ax] <= plane + 1e-9
 
-        # Part B: display-only safety guard. Drop any non-finite particle so a
-        # single bad value never crashes the view or autoscales the colour map.
-        finite_mask = np.isfinite(positions).all(axis=1)
+    def _draw_fluid(self, positions: np.ndarray, speeds: np.ndarray,
+                    velocities: np.ndarray) -> None:
+        """Apply finite-guard, clip plane, colour map and size to the scatter."""
+        positions = np.asarray(positions, dtype=np.float64)
+        speeds = np.asarray(speeds, dtype=np.float64)
+        velocities = np.asarray(velocities, dtype=np.float64)
+
+        finite = np.isfinite(positions).all(axis=1)
         if speeds.shape[0] == positions.shape[0]:
-            finite_mask &= np.isfinite(speeds)
-        if not finite_mask.all():
-            positions = positions[finite_mask]
-            speeds = speeds[finite_mask]
-            if velocities.shape[0] == finite_mask.shape[0]:
-                velocities = velocities[finite_mask]
+            finite &= np.isfinite(speeds)
+        keep = finite & self._clip_mask(positions)
+        positions = positions[keep]
+        speeds = speeds[keep]
+        if velocities.shape[0] == keep.shape[0]:
+            velocities = velocities[keep]
 
         if positions.shape[0] == 0:
             self._scatter.setData(pos=np.zeros((0, 3), dtype=np.float32))
         else:
-            # Colour scale clipped to the 99th percentile so lone outliers do
-            # not wash out the field (display only — physics state untouched).
             values = None
             if self._combo_color.currentText() == 'Secondary':
-                values = self._secondary_magnitude(
-                    positions.astype(np.float64), velocities)
+                values = self._secondary_magnitude(positions, velocities)
             colors = self._particle_colors(speeds, values)
-            size_world = self._particle_size_world()
             self._scatter.setData(
-                pos=positions, color=colors, size=size_world)
-        self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
-        self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
+                pos=positions.astype(np.float32), color=colors,
+                size=self._particle_size_world())
+        self._update_colorbar_labels()
+
+    def _rerender_current(self) -> None:
+        """Redraw the current (paused) frame — used by clip/colormode toggles."""
+        if self.runner is None or self.runner.backend.sim.fluid.n == 0:
+            return
+        fl = self.runner.backend.sim.fluid
+        pos = fl.positions.astype(np.float64)
+        vel = fl.velocities.astype(np.float64)
+        self._draw_fluid(pos, vel, vel) if False else self._draw_fluid(
+            pos, np.linalg.norm(vel, axis=1), vel)
+
+    def _on_clip_axis_changed(self, text: str) -> None:
+        self._clip_axis = {'Off': None, 'X': 0, 'Y': 1, 'Z': 2}.get(text, None)
+        self._rerender_current()
+
+    def _on_clip_pos_changed(self, v: int) -> None:
+        self._clip_frac = float(v) / 100.0
+        self._rerender_current()
+
+    # ── Part B: inlet / outlet markers ────────────────────────────────────
+    def _on_io_toggled(self, on: bool) -> None:
+        self._show_io_markers = bool(on)
+        self._apply_io_visibility()
+        if on:
+            self._update_io_markers()
+
+    def _apply_io_visibility(self) -> None:
+        vis = self._show_io_markers
+        for item in (self._inlet_ring, self._outlet_ring,
+                     self._inlet_label, self._outlet_label):
+            if item is not None:
+                item.setVisible(vis)
+
+    @staticmethod
+    def _ring_points(center: np.ndarray, normal: np.ndarray,
+                     radius: float, segs: int = 48) -> np.ndarray:
+        """Closed circle of `radius` centred at `center`, normal to `normal`."""
+        normal = normal / (np.linalg.norm(normal) + 1e-12)
+        ref = np.array([1.0, 0.0, 0.0]) if abs(normal[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        u = np.cross(normal, ref); u /= (np.linalg.norm(u) + 1e-12)
+        w = np.cross(normal, u)
+        th = np.linspace(0.0, 2 * np.pi, segs + 1)
+        pts = (center[None, :] + radius * (np.cos(th)[:, None] * u[None, :]
+                                           + np.sin(th)[:, None] * w[None, :]))
+        return pts.astype(np.float32)
+
+    def _io_geometry(self):
+        """Return (inlet_center, inlet_normal, outlet_center, outlet_normal, r).
+        Curved-elbow aware; falls back to fluid-bbox flow extremes."""
+        r = float(getattr(self, '_scene_R', 0.045)) or 0.045
+        fl = self.runner.backend.sim.fluid if self.runner is not None else None
+        if fl is None or getattr(fl, 'n', 0) == 0 or fl.positions.shape[1] < 3:
+            return None
+        p = fl.positions
+        scene = getattr(self.runner.backend.sim, 'scene', {})
+        forces = scene.get('forces', {}) if isinstance(scene, dict) else {}
+        if str(forces.get('body_force_mode', '')).lower() == 'tangent':
+            # Elbow: inlet at min-x end (centerline y≈R_bend), outlet at max-y end.
+            r_bend = 0.135
+            x_in = float(p[:, 0].min())
+            inlet_c = np.array([x_in, r_bend, 0.0])
+            inlet_n = np.array([1.0, 0.0, 0.0])
+            y_out = float(p[:, 1].max())
+            x_out = float(np.median(p[p[:, 1] > p[:, 1].max() - 0.03, 0])) if (p[:, 1] > p[:, 1].max() - 0.03).any() else float(p[:, 0].max())
+            outlet_c = np.array([x_out, y_out, 0.0])
+            outlet_n = np.array([0.0, 1.0, 0.0])
+            return inlet_c, inlet_n, outlet_c, outlet_n, r
+        # Generic fallback: inlet = min-x face, outlet = max-x face.
+        pmin = p.min(0); pmax = p.max(0)
+        c = 0.5 * (pmin + pmax)
+        inlet_c = np.array([pmin[0], c[1], c[2]])
+        outlet_c = np.array([pmax[0], c[1], c[2]])
+        n = np.array([1.0, 0.0, 0.0])
+        return inlet_c, n, outlet_c, n, r
+
+    def _update_io_markers(self) -> None:
+        geom = self._io_geometry()
+        if geom is None:
+            return
+        inlet_c, inlet_n, outlet_c, outlet_n, r = geom
+        self._inlet_ring.setData(pos=self._ring_points(inlet_c, inlet_n, r))
+        self._outlet_ring.setData(pos=self._ring_points(outlet_c, outlet_n, r))
+        if self._inlet_label is not None:
+            self._inlet_label.setData(pos=inlet_c + np.array([0, -r * 1.4, 0]), text='INLET')
+        if self._outlet_label is not None:
+            self._outlet_label.setData(pos=outlet_c + np.array([r * 1.4, 0, 0]), text='OUTLET')
+        self._apply_io_visibility()
+
+    def _on_step(self, m: dict):
+        positions = np.asarray(m['positions'], dtype=np.float64)
+        speeds = np.asarray(m['speeds'], dtype=np.float64)
+        velocities = np.asarray(
+            m.get('velocities', np.zeros_like(positions)), dtype=np.float64)
+
+        # Parts A/B/C: finite-guard + clip plane + colour map (display-only).
+        self._draw_fluid(positions, speeds, velocities)
 
         # Part C: refresh the bend velocity-arrow overlay when enabled.
         if self._chk_vectors.isChecked():
-            self._update_flow_vectors(
-                positions.astype(np.float64), velocities)
+            self._update_flow_vectors(positions, velocities)
 
         self._stat_vmax.set_value(m['vmax'])
         self._stat_rho.set_value(m['rho_err'])

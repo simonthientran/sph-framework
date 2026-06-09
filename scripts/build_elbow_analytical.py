@@ -32,7 +32,7 @@ D = 2 * R_PIPE
 R_BEND = 1.5 * D          # = 0.135 centerline curvature radius
 L_H = 0.30               # horizontal straight arm length
 L_V = 0.30               # vertical straight arm length
-DX = 0.012               # particle spacing
+DX = 0.0105              # particle spacing (~2x fluid count vs 0.012)
 N_LAYERS = 3
 
 

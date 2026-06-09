@@ -4,13 +4,13 @@
     "version": 1,
     "dimensions": 3,
     "scene_type": "pipe_elbow_analytical",
-    "description": "Curved elbow: torus bend R_bend=1.5*D=0.135, r=0.045, dx=0.012, nu=0.03, tangent body force mag=2.0. Fluid+boundary share centerline (concentric wall). Smooth arc, round cross-section; Dean number De=Re*sqrt(r/R_bend) well-defined."
+    "description": "Curved elbow: torus bend R_bend=1.5*D=0.135, r=0.045, dx=0.0105 (~2844 fluid), nu=0.03, tangent body force mag=2.0. Fluid+boundary share centerline (concentric wall). Smooth arc, round cross-section; Dean number De=Re*sqrt(r/R_bend) well-defined."
   },
 
   "fluid": {
     "type": "numpy_file",
     "file": "../assets/elbow_analytical/fluid.npy",
-    "spacing": 0.012,
+    "spacing": 0.0105,
     "initial_velocity": [0.25, 0.0, 0.0]
   },
 
