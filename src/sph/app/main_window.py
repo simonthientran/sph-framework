@@ -681,6 +681,7 @@ class MainWindow(QMainWindow):
 
         vm = mb.addMenu('View')
         act(vm, 'Reset Camera', self._reset_camera)
+        act(vm, 'Focus bend', self._focus_bend)
         vm.addSeparator()
         self._act_boundary = act(
             vm, 'Show Boundary Particles',
@@ -860,7 +861,9 @@ class MainWindow(QMainWindow):
 
         vg.addWidget(QLabel('Color by:'), 0, 0)
         self._combo_color = QComboBox()
-        self._combo_color.addItems(['Speed', 'Density error', 'Pressure', 'Solid color'])
+        self._combo_color.addItems(
+            ['Speed', 'Secondary', 'Density error', 'Pressure', 'Solid color'])
+        self._combo_color.currentTextChanged.connect(self._on_color_mode_changed)
         vg.addWidget(self._combo_color, 0, 1)
 
         vg.addWidget(QLabel('Colormap:'), 1, 0)
@@ -877,6 +880,13 @@ class MainWindow(QMainWindow):
         self._slider_size.setToolTip('Particle size multiplier (0.5x – 2.0x)')
         self._slider_size.valueChanged.connect(self._on_size_changed)
         vg.addWidget(self._slider_size, 2, 1)
+
+        # Part C: diagnostic velocity-arrow overlay at the bend (default off).
+        self._chk_vectors = QCheckBox('Show flow vectors')
+        self._chk_vectors.setChecked(False)
+        self._chk_vectors.setToolTip('Overlay short velocity arrows at the bend')
+        self._chk_vectors.toggled.connect(self._on_vectors_toggled)
+        vg.addWidget(self._chk_vectors, 3, 0, 1, 2)
         layout.addWidget(vis_grp)
 
         layout.addStretch()
@@ -936,6 +946,17 @@ class MainWindow(QMainWindow):
 
         # Default real-world particle radius (updated on scene load).
         self._particle_world_size = 0.016
+
+        # Part C: thin cyan velocity arrows at the bend (diagnostic overlay).
+        self._flow_vectors = gl.GLLinePlotItem(
+            pos=np.zeros((2, 3), dtype=np.float32),
+            color=(0.0, 0.9, 1.0, 0.85),
+            width=1.4,
+            mode='lines',
+            antialias=True)
+        self._flow_vectors.setGLOptions('translucent')
+        self._flow_vectors.setVisible(False)
+        self.gl_widget.addItem(self._flow_vectors)
 
         layout.addWidget(self.gl_widget)
         layout.addWidget(self._build_playback_bar())
@@ -1059,10 +1080,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(charts_grp)
 
         # Colorbar
-        cbar_grp = QGroupBox('COLORMAP SCALE')
-        cbar_layout = QVBoxLayout(cbar_grp)
+        self._cbar_grp = QGroupBox('COLORMAP SCALE · SPEED')
+        cbar_layout = QVBoxLayout(self._cbar_grp)
         cbar_layout.addWidget(self._build_colorbar())
-        layout.addWidget(cbar_grp)
+        layout.addWidget(self._cbar_grp)
 
         layout.addStretch()
 
@@ -1194,6 +1215,61 @@ class MainWindow(QMainWindow):
         if self.runner is not None:
             self._scatter.setData(size=self._particle_size_world())
 
+    def _on_color_mode_changed(self, mode: str) -> None:
+        """Relabel the colorbar and re-render the current frame in the new mode."""
+        if hasattr(self, '_cbar_grp'):
+            self._cbar_grp.setTitle(f'COLORMAP SCALE · {mode.upper()}')
+        if self.runner is None or self.runner.backend.sim.fluid.n == 0:
+            return
+        fl = self.runner.backend.sim.fluid
+        pos = fl.positions.astype(np.float64)
+        vel = fl.velocities.astype(np.float64)
+        speeds = np.linalg.norm(vel, axis=1)
+        values = self._secondary_magnitude(pos, vel) if mode == 'Secondary' else None
+        colors = self._particle_colors(speeds, values)
+        self._scatter.setData(pos=pos.astype(np.float32), color=colors)
+        self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
+        self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
+
+    def _on_vectors_toggled(self, on: bool) -> None:
+        """Show/hide the bend velocity-arrow overlay."""
+        if not on:
+            self._flow_vectors.setVisible(False)
+            return
+        self._flow_vectors.setVisible(True)
+        if self.runner is not None and self.runner.backend.sim.fluid.n > 0:
+            fl = self.runner.backend.sim.fluid
+            self._update_flow_vectors(
+                fl.positions.astype(np.float64),
+                fl.velocities.astype(np.float64))
+
+    def _update_flow_vectors(self, positions: np.ndarray, velocities: np.ndarray) -> None:
+        """Draw short cyan arrows along velocity for ~40 particles at the bend."""
+        if positions.shape[1] < 3:
+            self._flow_vectors.setData(pos=np.zeros((2, 3), dtype=np.float32))
+            return
+        x, y = positions[:, 0], positions[:, 1]
+        bend = (x > 0.25) & (x < 0.45) & (y > 0.02) & (y < 0.18)
+        idx = np.where(bend)[0]
+        if idx.size == 0:
+            self._flow_vectors.setData(pos=np.zeros((2, 3), dtype=np.float32))
+            return
+        if idx.size > 40:
+            idx = idx[np.linspace(0, idx.size - 1, 40).astype(int)]
+        p = positions[idx]
+        v = velocities[idx]
+        speed = np.linalg.norm(v, axis=1, keepdims=True)
+        direction = v / (speed + 1e-12)
+        # Arrow length scaled to speed, clamped so they stay subtle.
+        scale = self._particle_world_size * 6.0
+        length = np.clip(speed, 0.0, 0.05) / 0.05 * scale
+        ends = p + direction * length
+        # Interleave start/end points for 'lines' mode (pairs of vertices).
+        segs = np.empty((idx.size * 2, 3), dtype=np.float32)
+        segs[0::2] = p.astype(np.float32)
+        segs[1::2] = ends.astype(np.float32)
+        self._flow_vectors.setData(pos=segs, color=(0.0, 0.9, 1.0, 0.85))
+
     def _apply_colormap(self, values: np.ndarray, mode: str) -> np.ndarray:
         n = len(values)
         # Part B: clamp the colour scale to the 99th percentile so a lone
@@ -1213,6 +1289,27 @@ class MainWindow(QMainWindow):
         colors[:, 0] = r; colors[:, 1] = g; colors[:, 2] = b; colors[:, 3] = 0.95
         return colors
 
+    def _secondary_magnitude(
+        self, positions: np.ndarray, velocities: np.ndarray,
+    ) -> np.ndarray:
+        """Per-particle velocity magnitude perpendicular to the local main-flow
+        axis, highlighting the Dean / secondary swirl at the bend."""
+        n = positions.shape[0]
+        dim = positions.shape[1]
+        vx = velocities[:, 0]
+        vy = velocities[:, 1] if dim > 1 else np.zeros(n)
+        vz = velocities[:, 2] if dim > 2 else np.zeros(n)
+        x = positions[:, 0]
+        y = positions[:, 1] if dim > 1 else np.zeros(n)
+        perp = np.zeros(n, dtype=np.float64)
+        horiz = x < 0.25            # horizontal arm: main flow along x
+        vert = y > 0.25             # vertical arm:   main flow along y
+        bend = ~(horiz | vert)      # bend region:    treat main axis as x
+        perp[horiz] = np.sqrt(vy[horiz] ** 2 + vz[horiz] ** 2)
+        perp[vert] = np.sqrt(vx[vert] ** 2 + vz[vert] ** 2)
+        perp[bend] = np.sqrt(vy[bend] ** 2 + vz[bend] ** 2)
+        return perp
+
     def _particle_colors(
         self, speeds: np.ndarray, values: np.ndarray | None = None,
     ) -> np.ndarray:
@@ -1222,10 +1319,14 @@ class MainWindow(QMainWindow):
             colors = np.zeros((n, 4), dtype=np.float32)
             colors[:, 0] = 0.0; colors[:, 1] = 0.83; colors[:, 2] = 1.0; colors[:, 3] = 0.92
             return colors
-        if values is None:
-            values = speeds
         if mode == 'Speed':
             return self._apply_colormap(speeds, self._combo_colormap.currentText())
+        if mode == 'Secondary':
+            # ``values`` carries the precomputed perpendicular magnitude.
+            field = values if values is not None else speeds
+            return self._apply_colormap(field, self._combo_colormap.currentText())
+        if values is None:
+            values = speeds
         vmax = float(values.max()) if n else 1.0
         t = np.clip(values / (vmax * 0.8 + 1e-10), 0.0, 1.0)
         return self._apply_colormap(t, self._combo_colormap.currentText())
@@ -1316,6 +1417,11 @@ class MainWindow(QMainWindow):
             self._log_msg(f'Scene loaded: {Path(path).name}')
             self._sb_scene.setText(f'  {Path(path).name}')
             self._history = {k: [] for k in self._history}
+
+            # Clear any stale flow-vector overlay from the previous scene.
+            if hasattr(self, '_flow_vectors'):
+                self._flow_vectors.setData(pos=np.zeros((2, 3), dtype=np.float32))
+                self._flow_vectors.setVisible(self._chk_vectors.isChecked())
 
             # Part D: auto-frame camera to fit all particles.
             self._auto_frame_camera(fl, bd)
@@ -1470,6 +1576,8 @@ class MainWindow(QMainWindow):
     def _on_step(self, m: dict):
         positions = np.asarray(m['positions'], dtype=np.float32)
         speeds = np.asarray(m['speeds'], dtype=np.float64)
+        velocities = np.asarray(
+            m.get('velocities', np.zeros_like(positions)), dtype=np.float64)
 
         # Part B: display-only safety guard. Drop any non-finite particle so a
         # single bad value never crashes the view or autoscales the colour map.
@@ -1479,18 +1587,29 @@ class MainWindow(QMainWindow):
         if not finite_mask.all():
             positions = positions[finite_mask]
             speeds = speeds[finite_mask]
+            if velocities.shape[0] == finite_mask.shape[0]:
+                velocities = velocities[finite_mask]
 
         if positions.shape[0] == 0:
             self._scatter.setData(pos=np.zeros((0, 3), dtype=np.float32))
         else:
             # Colour scale clipped to the 99th percentile so lone outliers do
             # not wash out the field (display only — physics state untouched).
-            colors = self._particle_colors(speeds)
+            values = None
+            if self._combo_color.currentText() == 'Secondary':
+                values = self._secondary_magnitude(
+                    positions.astype(np.float64), velocities)
+            colors = self._particle_colors(speeds, values)
             size_world = self._particle_size_world()
             self._scatter.setData(
                 pos=positions, color=colors, size=size_world)
         self._lbl_cbar_min.setText(f'{self._colorbar_vmin:.4f}')
         self._lbl_cbar_max.setText(f'{self._colorbar_vmax:.4f}')
+
+        # Part C: refresh the bend velocity-arrow overlay when enabled.
+        if self._chk_vectors.isChecked():
+            self._update_flow_vectors(
+                positions.astype(np.float64), velocities)
 
         self._stat_vmax.set_value(m['vmax'])
         self._stat_rho.set_value(m['rho_err'])
@@ -1543,6 +1662,28 @@ class MainWindow(QMainWindow):
 
     def _reset_camera(self):
         self.gl_widget.setCameraPosition(distance=3.5, elevation=25, azimuth=45)
+
+    def _focus_bend(self):
+        """Frame the camera on the bend at a 3/4 angle to show secondary flow."""
+        from pyqtgraph import Vector
+        center = np.array([0.30, 0.06, 0.0])
+        diag = 0.18
+        if self.runner is not None:
+            fl = self.runner.backend.sim.fluid
+            if getattr(fl, 'n', 0) > 0 and fl.positions.shape[1] >= 3:
+                p = fl.positions
+                bend = ((p[:, 0] > 0.25) & (p[:, 0] < 0.45) &
+                        (p[:, 1] > 0.02) & (p[:, 1] < 0.18))
+                pts = p[bend] if bend.sum() > 5 else p
+                finite = pts[np.isfinite(pts).all(axis=1)]
+                if finite.shape[0] > 0:
+                    pmin, pmax = finite.min(axis=0), finite.max(axis=0)
+                    center = 0.5 * (pmin + pmax)
+                    diag = max(float(np.linalg.norm(pmax - pmin)), 0.1)
+        self.gl_widget.opts['center'] = Vector(
+            float(center[0]), float(center[1]), float(center[2]))
+        self.gl_widget.setCameraPosition(
+            distance=max(diag * 2.2, 0.15), elevation=28, azimuth=35)
 
     def _export_vtk(self):
         if not self.runner:
