@@ -4,19 +4,19 @@
     "version": 1,
     "dimensions": 3,
     "scene_type": "pipe_elbow_analytical",
-    "description": "L-elbow dx=0.015, R=0.06m, nu=0.001 → Re~36 at quasi-steady. Above Dean threshold De_crit=11.6."
+    "description": "Curved elbow: torus bend R_bend=1.5*D=0.135, r=0.045, dx=0.012, nu=0.03, tangent body force mag=2.0. Fluid+boundary share centerline (concentric wall). Smooth arc, round cross-section; Dean number De=Re*sqrt(r/R_bend) well-defined."
   },
 
   "fluid": {
     "type": "numpy_file",
-    "file": "../assets/elbow_industrial/fluid.npy",
-    "spacing": 0.015,
-    "initial_velocity": [0.0, 0.0, 0.0]
+    "file": "../assets/elbow_analytical/fluid.npy",
+    "spacing": 0.012,
+    "initial_velocity": [0.25, 0.0, 0.0]
   },
 
   "domain": {
-    "min": [-0.05, -0.10, -0.15],
-    "max": [0.45, 0.45, 0.15]
+    "min": [-0.05, 0.00, -0.12],
+    "max": [0.56, 0.64, 0.12]
   },
 
   "material": {
@@ -43,8 +43,10 @@
   },
 
   "forces": {
-    "gravity": [0.003, 0.0, 0.0],
-    "viscosity": { "enable": true, "nu": 0.10 },
+    "gravity": [0.0, 0.0, 0.0],
+    "body_force_mode": "tangent",
+    "body_force_magnitude": 2.0,
+    "viscosity": { "enable": true, "nu": 0.03 },
     "xsph": { "enable": false }
   },
 
@@ -62,7 +64,7 @@
   },
 
   "boundaries": [
-    { "type": "numpy_file", "file": "../assets/elbow_industrial/boundary.npy" }
+    { "type": "numpy_file", "file": "../assets/elbow_analytical/boundary.npy" }
   ],
 
   "export": {

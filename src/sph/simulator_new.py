@@ -187,6 +187,17 @@ class Simulator:
         gravity_raw = self.forces_cfg.get("gravity", [0.0, 0.0])
         self.gravity_vec = np.array(gravity_raw[:self.dim], dtype=np.float64)
 
+        # Optional tangent-following body force (drives flow along a curved
+        # centerline, e.g. a torus-bend elbow). Backward compatible: absent or
+        # "constant" → the usual constant gravity vector is used by the solver.
+        self._body_force_mode = str(self.forces_cfg.get("body_force_mode", "constant")).lower()
+        self._body_force_magnitude = float(self.forces_cfg.get("body_force_magnitude", 0.0))
+        if self._body_force_mode == "tangent":
+            # The tangent force is applied per-particle in step(); the solver's
+            # constant gravity is zeroed so it is not double-counted.
+            self.gravity_vec = np.zeros(self.dim, dtype=np.float64)
+            self._configure_elbow_centerline()
+
         # Solver runtime state
         self._last_solver_stats: dict[str, int] = {}
 
@@ -840,9 +851,50 @@ class Simulator:
         dt = min(dt_acoustic, dt_visc, dt_force, self._dt_max)
         return float(max(self._dt_min, dt))
 
+    def _configure_elbow_centerline(self) -> None:
+        """Centerline constants for the curved (torus-bend) elbow, matching
+        scripts/build_elbow_analytical.py."""
+        r_pipe = 0.045
+        d = 2 * r_pipe
+        self._tan_R_bend = 1.5 * d            # 0.135
+        self._tan_L_h = 0.30                  # horizontal arm length
+        self._bend_start_x = self._tan_L_h    # x where the bend begins
+        self._bend_end_y = 2 * self._tan_R_bend  # y where the vertical arm begins
+        self._bend_center = (self._tan_L_h, 2 * self._tan_R_bend)  # arc center
+
+    def _tangent_dirs(self, positions: np.ndarray) -> np.ndarray:
+        """Per-particle unit tangent of the elbow centerline (vectorized).
+
+        - horizontal arm (x < bend_start_x):  (+1, 0, 0)
+        - vertical arm   (y > bend_end_y):    (0, +1, 0)
+        - bend: tangent of the quarter-circle arc, inlet→outlet oriented.
+        """
+        n = positions.shape[0]
+        x = positions[:, 0]
+        y = positions[:, 1]
+        t = np.zeros((n, self.dim), dtype=np.float64)
+        horiz = x < self._bend_start_x
+        vert = (~horiz) & (y > self._bend_end_y)
+        bend = (~horiz) & (~vert)
+        t[horiz, 0] = 1.0
+        t[vert, 1] = 1.0
+        if bend.any():
+            cx, cy = self._bend_center
+            # arc point = C + R*(sin θ, -cos θ)  →  θ = atan2(x-cx, cy-y)
+            theta = np.arctan2(x[bend] - cx, cy - y[bend])
+            t[bend, 0] = np.cos(theta)
+            t[bend, 1] = np.sin(theta)
+        return t
+
     def step(self):
         """Advance simulation by one time step."""
         self.dt = self._compute_dt()
+        # Tangent-following body force: apply Δv = magnitude·tangent·dt before
+        # the solver so the PPE projection accounts for the driving force.
+        if (self._body_force_mode == "tangent"
+                and self._body_force_magnitude != 0.0 and self.fluid.n > 0):
+            tdirs = self._tangent_dirs(self.fluid.positions)
+            self.fluid.velocities += self.dt * self._body_force_magnitude * tdirs
         solver_report = self.time_step.step(self.fluid, self.boundary, self.dt)
         stats = self._normalize_solver_stats(solver_report)
         # Merge full DFSPH report (iter counts, density errors, etc.)
