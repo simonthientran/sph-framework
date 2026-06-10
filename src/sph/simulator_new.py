@@ -224,6 +224,26 @@ class Simulator:
             x_first = float(self.fluid.positions[:, 0].min())
             mask_first = np.abs(self.fluid.positions[:, 0] - x_first) < 0.5 * self.spacing
             self._inlet_yz = self.fluid.positions[mask_first, 1:].copy()
+            # Pipe axis (yz centre) and radius — used to enter the flow as a
+            # fully-developed parabolic profile v(r)=2*v_mean*(1-(r/R)^2) instead
+            # of a flat plug, so the profile is length-uniform from the inlet.
+            wall_cfg = domain_cfg.get("cylinder_wall", {})
+            if "center" in wall_cfg and "radius" in wall_cfg:
+                self._inlet_center_yz = np.array(wall_cfg["center"][:self.dim - 1], dtype=np.float64)
+                self._inlet_R = float(wall_cfg["radius"])
+            elif self._inlet_yz.shape[0] > 0:
+                self._inlet_center_yz = self._inlet_yz.mean(axis=0)
+                rad = np.linalg.norm(self._inlet_yz - self._inlet_center_yz, axis=1)
+                self._inlet_R = float(rad.max()) + 0.5 * self.spacing
+            else:
+                self._inlet_center_yz = np.zeros(self.dim - 1, dtype=np.float64)
+                self._inlet_R = 1.0
+            # Seed the WHOLE pipe with the developed parabola so the profile is
+            # length-uniform from t=0 (avoids a plug slug flushing through).
+            if self._inlet_velocity != 0.0 and self.fluid.n > 0:
+                self.fluid.velocities[:, 0] = self._parabolic_vx(
+                    self.fluid.positions[:, 1:], self._inlet_velocity)
+                self.fluid.velocities[:, 1:] = 0.0
         else:
             self._outlet_x = None
             self._inlet_x = None
@@ -1013,13 +1033,15 @@ class Simulator:
             return
         vin = self._inlet_velocity
 
-        # --- Continuous inlet-velocity boundary condition on the inlet band ---
+        # --- Continuous inlet BC: enter the flow ALREADY developed, as the
+        #     analytic Poiseuille parabola v(r)=2*v_mean*(1-(r/R)^2). This makes
+        #     the profile length-uniform from the inlet (no entrance length). ---
         band = (
             (fl.positions[:, 0] >= self._inlet_x)
             & (fl.positions[:, 0] < self._inlet_x + self._inlet_band)
         )
         if band.any():
-            fl.velocities[band, 0] = vin
+            fl.velocities[band, 0] = self._parabolic_vx(fl.positions[band, 1:], vin)
             fl.velocities[band, 1:] = 0.0   # purely axial inflow
 
         # --- Outlet: open atmosphere — remove particles past outlet_x ---
@@ -1028,16 +1050,24 @@ class Simulator:
         if n_removed > 0:
             self._fluid_remove(keep)
 
-        # --- Replenish: inject a fresh inlet layer to maintain supply ---
+        # --- Replenish: inject a fresh inlet layer with the SAME parabola ---
         if n_removed > 0 and len(self._inlet_yz) > 0:
             n_template = len(self._inlet_yz)
             template_idx = np.arange(n_removed) % n_template
             new_pos = np.empty((n_removed, fl.dim), dtype=np.float64)
             new_pos[:, 0] = self._inlet_x
             new_pos[:, 1:] = self._inlet_yz[template_idx]
+            v_ref = vin if vin != 0.0 else float(fl.velocities[:, 0].mean())
             new_vel = np.zeros((n_removed, fl.dim), dtype=np.float64)
-            new_vel[:, 0] = vin if vin != 0.0 else float(fl.velocities[:, 0].mean())
+            new_vel[:, 0] = self._parabolic_vx(new_pos[:, 1:], v_ref)
             self._fluid_append(new_pos, new_vel)
+
+    def _parabolic_vx(self, yz: np.ndarray, v_mean: float) -> np.ndarray:
+        """Fully-developed Poiseuille axial velocity v(r)=2*v_mean*(1-(r/R)^2)
+        for cross-section positions ``yz`` (clamped >= 0 at/outside the wall)."""
+        r = np.linalg.norm(yz - self._inlet_center_yz[None, :], axis=1)
+        prof = 2.0 * v_mean * (1.0 - (r / self._inlet_R) ** 2)
+        return np.clip(prof, 0.0, None)
 
     # Per-particle array names used when growing / shrinking the fluid set.
     _FL_VEC_ATTRS = ("positions", "velocities", "accelerations")

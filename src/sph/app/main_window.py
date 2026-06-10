@@ -434,6 +434,21 @@ def _cool(t: np.ndarray):
     return t, 1 - t, np.ones_like(t)
 
 
+def _coolwarm(t: np.ndarray):
+    """Diverging blue→white→red map (CFD pressure look): t=0 blue (low),
+    t=0.5 near-white (~0), t=1 red (high)."""
+    t = np.clip(t, 0.0, 1.0)
+    lo = np.array([0.23, 0.30, 0.75])   # blue
+    mid = np.array([0.95, 0.95, 0.95])  # near-white
+    hi = np.array([0.71, 0.02, 0.15])   # red
+    s = np.clip(t * 2.0, 0, 1)[:, None]            # 0..0.5 → lo→mid
+    s2 = np.clip((t - 0.5) * 2.0, 0, 1)[:, None]   # 0.5..1 → mid→hi
+    lower = lo[None, :] * (1 - s) + mid[None, :] * s
+    upper = mid[None, :] * (1 - s2) + hi[None, :] * s2
+    out = np.where((t[:, None] < 0.5), lower, upper)
+    return out[:, 0], out[:, 1], out[:, 2]
+
+
 _CMAP_FNS = {
     'Turbo':   _turbo,
     'Plasma':  _plasma,
@@ -441,6 +456,7 @@ _CMAP_FNS = {
     'Inferno': _inferno,
     'Hot':     _hot,
     'Cool':    _cool,
+    'Coolwarm': _coolwarm,
 }
 COLORMAP_OPTIONS = tuple(_CMAP_FNS.keys())
 
@@ -874,8 +890,20 @@ class MainWindow(QMainWindow):
         self._combo_color = QComboBox()
         self._combo_color.addItems(
             ['Speed', 'Secondary', 'Density error', 'Pressure', 'Solid color'])
+        self._combo_color.setToolTip(
+            'Pressure is RELATIVE and qualitative (WCSPH). '
+            'Velocity is the quantitatively validated field.')
         self._combo_color.currentTextChanged.connect(self._on_color_mode_changed)
         vg.addWidget(self._combo_color, 0, 1)
+
+        # Honest note shown only in Pressure mode.
+        self._lbl_pressure_note = QLabel(
+            'Relative pressure — qualitative (WCSPH).\nVelocity is quantitatively validated.')
+        self._lbl_pressure_note.setWordWrap(True)
+        self._lbl_pressure_note.setStyleSheet(
+            f'color: {PALETTE["dark"]["warning"]}; font-size: 9px;')
+        self._lbl_pressure_note.setVisible(False)
+        vg.addWidget(self._lbl_pressure_note, 5, 0, 1, 2)
 
         vg.addWidget(QLabel('Colormap:'), 1, 0)
         self._combo_colormap = QComboBox()
@@ -1372,7 +1400,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_colorbar_image(self) -> None:
         """Build a vertical gradient bar (1 px wide × 256 px tall, low→high)."""
-        name = self._combo_colormap.currentText()
+        # Pressure mode forces the diverging Coolwarm map (standard CFD look).
+        if self._combo_color.currentText() == 'Pressure':
+            name = 'Coolwarm'
+        else:
+            name = self._combo_colormap.currentText()
         fn = _CMAP_FNS.get(name, _turbo)
         n = 256
         t = np.linspace(0.0, 1.0, n)  # bottom = low, top = high
@@ -1399,7 +1431,7 @@ class MainWindow(QMainWindow):
             'Speed': 'Speed [m/s]',
             'Secondary': 'Secondary [m/s]',
             'Density error': 'ρ error',
-            'Pressure': 'Pressure',
+            'Pressure': 'Pressure (relative, qualitative) [Pa]',
             'Solid color': 'Solid',
         }.get(self._combo_color.currentText(), self._combo_color.currentText())
 
@@ -1407,13 +1439,17 @@ class MainWindow(QMainWindow):
         """Sync both colorbars' min/mid/max labels and the big-bar title."""
         vmin, vmax = self._colorbar_vmin, self._colorbar_vmax
         vmid = 0.5 * (vmin + vmax)
+        # Pressure values can be large (Pa); use compact formatting.
+        pressure = self._combo_color.currentText() == 'Pressure'
+        fmt = (lambda v: f'{v:+.3g}') if pressure else (lambda v: f'{v:.4f}')
+        fmt_big = (lambda v: f'{v:+.2g}') if pressure else (lambda v: f'{v:.3f}')
         if hasattr(self, '_lbl_cbar_min'):
-            self._lbl_cbar_min.setText(f'{vmin:.4f}')
-            self._lbl_cbar_max.setText(f'{vmax:.4f}')
+            self._lbl_cbar_min.setText(fmt(vmin))
+            self._lbl_cbar_max.setText(fmt(vmax))
         if hasattr(self, '_big_cbar_min'):
-            self._big_cbar_min.setText(f'{vmin:.3f}')
-            self._big_cbar_mid.setText(f'{vmid:.3f}')
-            self._big_cbar_max.setText(f'{vmax:.3f}')
+            self._big_cbar_min.setText(fmt_big(vmin))
+            self._big_cbar_mid.setText(fmt_big(vmid))
+            self._big_cbar_max.setText(fmt_big(vmax))
             self._big_cbar_title.setText(self._color_by_label())
 
     def _rebuild_colorbar(self, *_args) -> None:
@@ -1435,6 +1471,10 @@ class MainWindow(QMainWindow):
             self._cbar_grp.setTitle(f'COLORMAP SCALE · {mode.upper()}')
         if hasattr(self, '_big_cbar_title'):
             self._big_cbar_title.setText(self._color_by_label())
+        # Pressure mode → diverging Coolwarm bar + honest qualitative note.
+        self._refresh_colorbar_image()
+        if hasattr(self, '_lbl_pressure_note'):
+            self._lbl_pressure_note.setVisible(mode == 'Pressure')
         self._rerender_current()
 
     def _on_vectors_toggled(self, on: bool) -> None:
@@ -1624,6 +1664,13 @@ class MainWindow(QMainWindow):
                 self._scene_R = float(np.percentile(r_bd, 95))
             else:
                 self._scene_R = 0.07
+
+            # Cache boundary positions + support radius for the Pressure-mode
+            # wall-deficiency neighbour count.
+            self._boundary_pos_cache = (
+                bd.positions.copy() if (bd is not None and hasattr(bd, 'positions')
+                                        and len(bd.positions) > 0) else None)
+            self._support_radius = float(getattr(self.runner.backend.sim, 'support_radius', 0.04))
 
             self._lbl_scene.setText(f'{Path(path).name}\n{fl.n} fluid · {n_bd} bnd')
             self._log_msg(f'Scene loaded: {Path(path).name}')
@@ -1848,16 +1895,85 @@ class MainWindow(QMainWindow):
             self._scatter.setData(pos=np.zeros((0, 3), dtype=np.float32))
         else:
             mode = self._combo_color.currentText()
-            values = None
-            if mode == 'Secondary':
-                values = self._secondary_magnitude(positions, velocities)
-            elif mode == 'Pressure' and p_display is not None:
-                values = p_display
-            colors = self._particle_colors(speeds, values)
+            if mode == 'Pressure' and p_display is not None:
+                colors = self._pressure_colors(positions, p_display)
+            else:
+                values = None
+                if mode == 'Secondary':
+                    values = self._secondary_magnitude(positions, velocities)
+                colors = self._particle_colors(speeds, values)
             self._scatter.setData(
                 pos=positions.astype(np.float32), color=colors,
                 size=self._particle_size_world())
         self._update_colorbar_labels()
+
+    def _neighbor_counts(self, positions: np.ndarray) -> np.ndarray:
+        """Per-fluid-particle FLUID-neighbour count within the support radius.
+        Fluid-only (boundary excluded) so wall-adjacent particles — which have
+        fluid on one side only — show a genuinely low count and are detected as
+        kernel-deficient. Computed only in Pressure mode (cost paid on demand)."""
+        try:
+            from scipy.spatial import cKDTree
+        except Exception:
+            return np.full(positions.shape[0], 1.0)
+        h = float(getattr(self, '_support_radius', 0.0)) or 0.04
+        tree = cKDTree(positions)
+        counts = tree.query_ball_point(positions, r=h, return_length=True) - 1
+        return counts.astype(np.float64)
+
+    def _pressure_colors(self, positions: np.ndarray, p_display: np.ndarray) -> np.ndarray:
+        """FIX1+2: gray out wall-deficient particles, spatially SMOOTH the
+        pressure field (neighbour-average removes WCSPH per-particle density
+        noise) and colour with a diverging Coolwarm map over a symmetric,
+        outlier-proof (5–95th percentile) range of the interior, smoothed field."""
+        n = positions.shape[0]
+        gray = np.array([0.45, 0.45, 0.45, 0.35], dtype=np.float32)
+        if n == 0:
+            return np.zeros((0, 4), dtype=np.float32)
+        try:
+            from scipy.spatial import cKDTree
+        except Exception:
+            cKDTree = None
+
+        h = float(getattr(self, '_support_radius', 0.0)) or 0.04
+        if cKDTree is not None:
+            tree = cKDTree(positions)
+            nbrs = tree.query_ball_point(positions, r=h)
+            counts = np.array([len(lst) - 1 for lst in nbrs], dtype=np.float64)
+            # neighbour-average p_display → smooth field (display-only)
+            p_smooth = np.array([float(p_display[lst].mean()) if lst else float(p_display[i])
+                                 for i, lst in enumerate(nbrs)], dtype=np.float64)
+        else:
+            counts = np.full(n, 1.0)
+            p_smooth = p_display.copy()
+
+        med = float(np.median(counts))
+        deficient = counts < 0.6 * max(med, 1.0)
+        interior = ~deficient
+        self._pressure_deficient_count = int(deficient.sum())
+
+        # RELATIVE pressure: centre the diverging map on the interior median
+        # (absolute 0 is meaningless in WCSPH — the whole field is offset by the
+        # density floor). A near-uniform field then reads neutral/white, and
+        # deviations show blue (low) / red (high). Symmetric, 5–95th pct, robust.
+        p_int = p_smooth[interior] if interior.any() else p_smooth
+        if p_int.size:
+            centre = float(np.median(p_int))
+            lo = float(np.percentile(p_int, 5))
+            hi = float(np.percentile(p_int, 95))
+        else:
+            centre, lo, hi = 0.0, -1.0, 1.0
+        dev = max(abs(lo - centre), abs(hi - centre), 1e-9)
+        self._colorbar_vmin = centre - dev
+        self._colorbar_vmax = centre + dev
+
+        # Diverging Coolwarm on the SMOOTHED field; clamp so outliers saturate.
+        t = np.clip((p_smooth - centre) / (2.0 * dev) + 0.5, 0.0, 1.0)
+        r, g, b = _coolwarm(t)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, 0] = r; colors[:, 1] = g; colors[:, 2] = b; colors[:, 3] = 0.95
+        colors[deficient] = gray   # wall-deficient → neutral gray
+        return colors
 
     def _rerender_current(self) -> None:
         """Redraw the current (paused) frame — used by clip/colormode toggles."""
