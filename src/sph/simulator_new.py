@@ -214,7 +214,12 @@ class Simulator:
             self._outlet_x = float(io_cfg.get("outlet_x", 0.19))
             self._inlet_x = float(io_cfg.get("inlet_x", 0.01))
             self._inlet_velocity = float(io_cfg.get("inlet_velocity", 0.0))  # 0 → use vx_mean
+            # Outlet is an open atmosphere (reference p=0); kept for back-compat
+            # but no longer used as a pressure control.
             self._outlet_pressure = float(io_cfg.get("outlet_pressure", 0.0))
+            # Inlet band: particles within this x-distance of inlet_x get their
+            # velocity continuously driven to the inlet velocity each step.
+            self._inlet_band = float(io_cfg.get("inlet_band", 2.0 * self.spacing))
             # Snapshot yz cross-section from the first x-slice of the initial fluid
             x_first = float(self.fluid.positions[:, 0].min())
             mask_first = np.abs(self.fluid.positions[:, 0] - x_first) < 0.5 * self.spacing
@@ -224,6 +229,7 @@ class Simulator:
             self._inlet_x = None
             self._inlet_velocity = 0.0
             self._outlet_pressure = 0.0
+            self._inlet_band = 0.0
             self._inlet_yz = None
 
         self.current_step = 0
@@ -932,6 +938,13 @@ class Simulator:
         if self._emitters or self._outlets:
             self._apply_emitters_outlets(stats)
 
+        # Step 3: signed DISPLAY pressure (commercial-CFD style), k*(rho-rho0)
+        # WITHOUT the >=0 clamp — so inner-bend under-pressure is negative and
+        # outer-bend/stagnation over-pressure is positive. Diagnostic field for
+        # the GUI only; it does NOT affect the DFSPH solve.
+        if self.fluid.n > 0:
+            self.fluid.p_display[:] = self.eos_k * (self.fluid.densities - self.fluid.rho0)
+
         self.t += self.dt
         self.current_step += 1
 
@@ -985,66 +998,51 @@ class Simulator:
 
     def _apply_inlet_outlet(self) -> None:
         """
-        Open-domain inlet/outlet: remove particles past the outlet plane and
-        inject a fresh layer at the inlet plane to maintain particle count.
+        Inlet-velocity-driven open-domain flow.
 
-        Outlet: particles at x > outlet_x are removed.
-        Inlet:  when particles are removed, one cross-section layer is added at
-                inlet_x with the current mean flow velocity in x.
+        Inlet:  a continuous Dirichlet velocity BC — particles within the inlet
+                band [inlet_x, inlet_x+band) have their velocity driven to the
+                inlet velocity (axial, +x) EVERY step, independent of outlet
+                removal timing.
+        Outlet: open atmosphere (reference p=0). Particles past outlet_x are
+                removed; an equal fresh layer is injected at the inlet plane to
+                keep the pipe supplied.
         """
         fl = self.fluid
+        if fl.n == 0:
+            return
+        vin = self._inlet_velocity
 
-        # --- Outlet ---
+        # --- Continuous inlet-velocity boundary condition on the inlet band ---
+        band = (
+            (fl.positions[:, 0] >= self._inlet_x)
+            & (fl.positions[:, 0] < self._inlet_x + self._inlet_band)
+        )
+        if band.any():
+            fl.velocities[band, 0] = vin
+            fl.velocities[band, 1:] = 0.0   # purely axial inflow
+
+        # --- Outlet: open atmosphere — remove particles past outlet_x ---
         keep = fl.positions[:, 0] <= self._outlet_x
         n_removed = int(np.sum(~keep))
-        if n_removed == 0:
-            return
+        if n_removed > 0:
+            self._fluid_remove(keep)
 
-        # Compress all per-particle arrays by the keep mask
-        _vec_attrs = ("positions", "velocities", "accelerations")
-        _scl_attrs = ("densities", "pressures", "k_dfsph",
-                      "p_cd_prev", "p_df_prev", "rho_self", "rho_ff", "rho_fb")
-        for attr in _vec_attrs:
-            setattr(fl, attr, getattr(fl, attr)[keep])
-        for attr in _scl_attrs:
-            if hasattr(fl, attr):
-                setattr(fl, attr, getattr(fl, attr)[keep])
-        fl.n = len(fl.positions)
-
-        # --- Inlet: inject exactly n_removed particles ---
-        # Use configured inlet_velocity; fall back to bulk mean if not set.
-        vx_in = self._inlet_velocity if self._inlet_velocity != 0.0 else float(fl.velocities[:, 0].mean())
-        # Inject the same count that left so particle count is conserved exactly.
-        # Cycle through the cross-section template if n_removed differs from layer size.
-        n_template = len(self._inlet_yz)
-        n_add = n_removed
-        template_idx = np.arange(n_add) % n_template  # wrap-around selection
-
-        new_pos = np.empty((n_add, fl.dim), dtype=np.float64)
-        new_pos[:, 0] = self._inlet_x
-        new_pos[:, 1:] = self._inlet_yz[template_idx]
-
-        new_vel = np.zeros((n_add, fl.dim), dtype=np.float64)
-        new_vel[:, 0] = vx_in
-
-        fl.positions = np.vstack([fl.positions, new_pos])
-        fl.velocities = np.vstack([fl.velocities, new_vel])
-        fl.accelerations = np.vstack(
-            [fl.accelerations, np.zeros((n_add, fl.dim), dtype=np.float64)]
-        )
-        fl.densities = np.concatenate([fl.densities, np.full(n_add, fl.rho0, dtype=np.float64)])
-        fl.pressures = np.concatenate([fl.pressures, np.zeros(n_add, dtype=np.float64)])
-        for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "p_physical", "rho_self", "rho_ff", "rho_fb"):
-            if hasattr(fl, attr):
-                setattr(fl, attr, np.concatenate(
-                    [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]
-                ))
-        fl.n = len(fl.positions)
+        # --- Replenish: inject a fresh inlet layer to maintain supply ---
+        if n_removed > 0 and len(self._inlet_yz) > 0:
+            n_template = len(self._inlet_yz)
+            template_idx = np.arange(n_removed) % n_template
+            new_pos = np.empty((n_removed, fl.dim), dtype=np.float64)
+            new_pos[:, 0] = self._inlet_x
+            new_pos[:, 1:] = self._inlet_yz[template_idx]
+            new_vel = np.zeros((n_removed, fl.dim), dtype=np.float64)
+            new_vel[:, 0] = vin if vin != 0.0 else float(fl.velocities[:, 0].mean())
+            self._fluid_append(new_pos, new_vel)
 
     # Per-particle array names used when growing / shrinking the fluid set.
     _FL_VEC_ATTRS = ("positions", "velocities", "accelerations")
     _FL_SCL_ATTRS = ("densities", "pressures", "k_dfsph", "p_cd_prev",
-                     "p_df_prev", "p_physical", "rho_self", "rho_ff", "rho_fb")
+                     "p_df_prev", "p_physical", "p_display", "rho_self", "rho_ff", "rho_fb")
 
     def _fluid_remove(self, keep: np.ndarray) -> None:
         """Keep only fluid particles where ``keep`` is True (compress arrays)."""
@@ -1069,7 +1067,7 @@ class Simulator:
         fl.densities = np.concatenate([fl.densities, np.full(n_add, fl.rho0, dtype=np.float64)])
         fl.pressures = np.concatenate([fl.pressures, np.zeros(n_add, dtype=np.float64)])
         for attr in ("k_dfsph", "p_cd_prev", "p_df_prev", "p_physical",
-                     "rho_self", "rho_ff", "rho_fb"):
+                     "p_display", "rho_self", "rho_ff", "rho_fb"):
             if hasattr(fl, attr):
                 setattr(fl, attr, np.concatenate(
                     [getattr(fl, attr), np.zeros(n_add, dtype=np.float64)]))

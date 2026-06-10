@@ -1,0 +1,37 @@
+{
+  "backend_name": "",
+  "boundary_count": 3060,
+  "density_summary": null,
+  "dt": 1e-06,
+  "fluid_count": 1776,
+  "neighbor_max": 91,
+  "neighbor_mean": 32.7454954954955,
+  "neighbor_min": 17,
+  "pressure_max": 7434.283382464002,
+  "pressure_mean": 3914.7677864762895,
+  "pressure_min": 0.0,
+  "rho_error_mean": 0.019126232634629734,
+  "rho_max": 1020.0,
+  "rho_mean": 1002.0736419885704,
+  "rho_min": 850.0,
+  "scene_name": "3D Cylinder Pipe Flow (inlet-driven, water)",
+  "solver": "DFSPH (cd=10, df=1)",
+  "solver_health_notes": [],
+  "solver_health_summary": "",
+  "solver_metrics": {
+    "cd_converged": 0.0,
+    "df_converged": 1.0,
+    "div_error_mean": 8.616680476027719e-06,
+    "iter_cd": 10.0,
+    "iter_df": 1.0,
+    "rho_error_max": 0.020067329987165296,
+    "rho_error_mean": 0.010607228545898783
+  },
+  "stability": "warn",
+  "stage_timings_ms": {
+    "total": 27.769056000011005
+  },
+  "step": 2060,
+  "velocity_max": 0.7394976215435738,
+  "wall_time_ms": 27.769056000011005
+}

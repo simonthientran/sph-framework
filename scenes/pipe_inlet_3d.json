@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "name": "3D Cylinder Pipe — inlet-velocity-driven (Poiseuille)",
+    "version": 1,
+    "dimensions": 3,
+    "description": "Inlet-velocity BC drives the flow: a continuous Dirichlet velocity band at the inlet plane sets inflow speed; outlet is open atmosphere (p=0). Develops a Hagen-Poiseuille parabola downstream. spacing=0.015, R=0.07, nu=0.02, inlet_velocity=0.1.",
+    "scene_type": "cylinder_pipe"
+  },
+
+  "hydraulic_diameter": 0.14,
+
+  "fluids": [
+    {
+      "type": "cylinder_x",
+      "name": "fluid",
+      "spacing": 0.015,
+      "axis_min": 0.0,
+      "axis_max": 0.40,
+      "center": [0.1, 0.1],
+      "radius": 0.07,
+      "initial_velocity": [0.1, 0.0, 0.0]
+    }
+  ],
+
+  "domain": {
+    "min": [0.0, 0.0, 0.0],
+    "max": [0.45, 0.2, 0.2],
+    "periodic_x": false,
+    "cylinder_wall": {
+      "center": [0.1, 0.1],
+      "radius": 0.07,
+      "boundary_layers": 2
+    },
+    "inlet_outlet": {
+      "enable": true,
+      "outlet_x": 0.40,
+      "inlet_x": 0.01,
+      "inlet_velocity": 0.1,
+      "inlet_band": 0.08,
+      "outlet_pressure": 0.0
+    }
+  },
+
+  "material": {
+    "rho0": 1000.0,
+    "eos": { "type": "linear", "k": 50000.0 }
+  },
+
+  "solver": {
+    "type": "dfsph",
+    "eos_k": 50000.0,
+    "dfsph": {
+      "viscosity_factor": 2.0,
+      "eta_cd": 0.01,
+      "eta_df": 0.1,
+      "max_iter_cd": 10,
+      "max_iter_df": 10,
+      "density_diffusion": { "enable": false, "delta": 0.1, "floor_ratio": 0.60 },
+      "free_surface_stabilization": { "enable": false }
+    }
+  },
+
+  "forces": {
+    "gravity": [0.0, 0.0, 0.0],
+    "viscosity": { "enable": true, "nu": 0.02 },
+    "xsph": { "enable": false }
+  },
+
+  "neighbors": {
+    "type": "kdtree",
+    "support_radius": 0.04
+  },
+
+  "time": {
+    "mode": "cfl",
+    "cfl": 0.4,
+    "dt_min": 1.0e-6,
+    "dt_max": 0.0002,
+    "steps": 1800
+  },
+
+  "export": {
+    "csv": { "enable": false },
+    "vtk": { "enable": false }
+  }
+}

@@ -495,6 +495,8 @@ class SimWorker(QThread):
                     'positions': pos,
                     'speeds':    spd,
                     'velocities': fl.velocities.copy(),
+                    'p_display': (fl.p_display.copy()
+                                  if hasattr(fl, 'p_display') else None),
                 }
                 self.step_done.emit(metrics)
             except Exception as e:
@@ -693,6 +695,9 @@ class MainWindow(QMainWindow):
             vm, 'Show Boundary Particles',
             self._toggle_boundary, checkable=True)
         self._act_boundary.setChecked(True)
+        self._act_axes = act(
+            vm, 'Show axes', self._toggle_axes, checkable=True)
+        self._act_axes.setChecked(True)
         vm.addSeparator()
         self._act_theme = vm.addAction('Light Mode', self._toggle_theme)
 
@@ -920,6 +925,48 @@ class MainWindow(QMainWindow):
         cg.addWidget(self._slider_clip, 1, 1)
         layout.addWidget(clip_grp)
 
+        # Part B: live flow-drive controls.
+        flow_grp = QGroupBox('FLOW')
+        fg = QGridLayout(flow_grp)
+        fg.setSpacing(6)
+        self._lbl_drive = QLabel('Drive magnitude:')
+        fg.addWidget(self._lbl_drive, 0, 0)
+        self._spin_drive = QDoubleSpinBox()
+        self._spin_drive.setRange(0.0, 5.0)
+        self._spin_drive.setSingleStep(0.1)
+        self._spin_drive.setDecimals(2)
+        self._spin_drive.setValue(2.0)
+        self._spin_drive.setToolTip('Tangent body-force magnitude (drives the flow, live)')
+        self._spin_drive.valueChanged.connect(self._on_drive_changed)
+        fg.addWidget(self._spin_drive, 0, 1)
+
+        # Inlet velocity / outlet pressure (only for inlet/outlet scenes).
+        self._lbl_inletv = QLabel('Inlet velocity:')
+        fg.addWidget(self._lbl_inletv, 1, 0)
+        self._spin_inletv = QDoubleSpinBox()
+        self._spin_inletv.setRange(0.0, 10.0)
+        self._spin_inletv.setSingleStep(0.05)
+        self._spin_inletv.setDecimals(3)
+        self._spin_inletv.valueChanged.connect(self._on_inletv_changed)
+        fg.addWidget(self._spin_inletv, 1, 1)
+
+        self._lbl_outletp = QLabel('Outlet:')
+        fg.addWidget(self._lbl_outletp, 2, 0)
+        self._spin_outletp = QDoubleSpinBox()
+        self._spin_outletp.setRange(-1e5, 1e5)
+        self._spin_outletp.setSingleStep(10.0)
+        self._spin_outletp.setDecimals(1)
+        self._spin_outletp.valueChanged.connect(self._on_outletp_changed)
+        fg.addWidget(self._spin_outletp, 2, 1)
+
+        # Read-only note for tangent-driven (open outlet) scenes.
+        self._lbl_outlet_note = QLabel('open (tangent-driven)')
+        self._lbl_outlet_note.setStyleSheet(
+            f'color: {PALETTE["dark"]["text_dim"]}; font-size: 10px;')
+        fg.addWidget(self._lbl_outlet_note, 3, 0, 1, 2)
+        layout.addWidget(flow_grp)
+        self._flow_grp = flow_grp
+
         layout.addStretch()
 
         # Console
@@ -1013,6 +1060,26 @@ class MainWindow(QMainWindow):
             self._outlet_label.setVisible(False)
         except Exception:
             self._inlet_label = self._outlet_label = None
+
+        # Part A: small XYZ orientation gizmo (X=red, Y=green, Z=blue) at the
+        # fluid bbox origin, length ~0.5*pipe radius. Positioned on scene load.
+        self._axes_items: list = []
+        self._axes_labels: list = []
+        for col in ((1.0, 0.25, 0.25, 1.0), (0.25, 1.0, 0.35, 1.0), (0.3, 0.5, 1.0, 1.0)):
+            ln = gl.GLLinePlotItem(
+                pos=np.zeros((2, 3), dtype=np.float32), color=col,
+                width=2.5, mode='lines', antialias=True)
+            ln.setGLOptions('translucent')
+            self.gl_widget.addItem(ln)
+            self._axes_items.append(ln)
+        try:
+            for txt, col in (('X', (255, 60, 60)), ('Y', (60, 255, 90)), ('Z', (80, 130, 255))):
+                t = gl.GLTextItem(pos=np.zeros(3), text=txt, color=col)
+                self.gl_widget.addItem(t)
+                self._axes_labels.append(t)
+        except Exception:
+            self._axes_labels = []
+        self._show_axes = True
 
         # Part C: gl viewport + large colorbar docked at its right edge.
         view_row = QWidget()
@@ -1463,6 +1530,10 @@ class MainWindow(QMainWindow):
             # ``values`` carries the precomputed perpendicular magnitude.
             field = values if values is not None else speeds
             return self._apply_colormap(field, self._combo_colormap.currentText())
+        if mode == 'Pressure' and values is not None:
+            # Signed display pressure k*(rho-rho0): map directly so negatives
+            # (low/inner) → cool, positives (high/outer/stagnation) → warm.
+            return self._apply_colormap(values, self._combo_colormap.currentText())
         if values is None:
             values = speeds
         vmax = float(values.max()) if n else 1.0
@@ -1582,6 +1653,10 @@ class MainWindow(QMainWindow):
             self._update_io_markers()
             self._refresh_colorbar_image()
             self._update_colorbar_labels()
+
+            # Part A/B: orientation gizmo + live flow-drive controls.
+            self._update_axes_gizmo()
+            self._sync_flow_controls()
 
             # Part D: auto-frame camera to fit all particles.
             self._auto_frame_camera(fl, bd)
@@ -1749,11 +1824,13 @@ class MainWindow(QMainWindow):
         return positions[:, ax] <= plane + 1e-9
 
     def _draw_fluid(self, positions: np.ndarray, speeds: np.ndarray,
-                    velocities: np.ndarray) -> None:
+                    velocities: np.ndarray, p_display: np.ndarray | None = None) -> None:
         """Apply finite-guard, clip plane, colour map and size to the scatter."""
         positions = np.asarray(positions, dtype=np.float64)
         speeds = np.asarray(speeds, dtype=np.float64)
         velocities = np.asarray(velocities, dtype=np.float64)
+        if p_display is not None:
+            p_display = np.asarray(p_display, dtype=np.float64)
 
         finite = np.isfinite(positions).all(axis=1)
         if speeds.shape[0] == positions.shape[0]:
@@ -1763,13 +1840,18 @@ class MainWindow(QMainWindow):
         speeds = speeds[keep]
         if velocities.shape[0] == keep.shape[0]:
             velocities = velocities[keep]
+        if p_display is not None and p_display.shape[0] == keep.shape[0]:
+            p_display = p_display[keep]
 
         if positions.shape[0] == 0:
             self._scatter.setData(pos=np.zeros((0, 3), dtype=np.float32))
         else:
+            mode = self._combo_color.currentText()
             values = None
-            if self._combo_color.currentText() == 'Secondary':
+            if mode == 'Secondary':
                 values = self._secondary_magnitude(positions, velocities)
+            elif mode == 'Pressure' and p_display is not None:
+                values = p_display
             colors = self._particle_colors(speeds, values)
             self._scatter.setData(
                 pos=positions.astype(np.float32), color=colors,
@@ -1783,8 +1865,8 @@ class MainWindow(QMainWindow):
         fl = self.runner.backend.sim.fluid
         pos = fl.positions.astype(np.float64)
         vel = fl.velocities.astype(np.float64)
-        self._draw_fluid(pos, vel, vel) if False else self._draw_fluid(
-            pos, np.linalg.norm(vel, axis=1), vel)
+        pdisp = fl.p_display.copy() if hasattr(fl, 'p_display') else None
+        self._draw_fluid(pos, np.linalg.norm(vel, axis=1), vel, pdisp)
 
     def _on_clip_axis_changed(self, text: str) -> None:
         self._clip_axis = {'Off': None, 'X': 0, 'Y': 1, 'Z': 2}.get(text, None)
@@ -1863,6 +1945,94 @@ class MainWindow(QMainWindow):
             self._outlet_label.setData(pos=outlet_c + np.array([r * 1.4, 0, 0]), text='OUTLET')
         self._apply_io_visibility()
 
+    # ── Part A: XYZ orientation gizmo ─────────────────────────────────────
+    def _toggle_axes(self, checked: bool) -> None:
+        self._show_axes = bool(checked)
+        self._apply_axes_visibility()
+
+    def _apply_axes_visibility(self) -> None:
+        for it in self._axes_items + self._axes_labels:
+            if it is not None:
+                it.setVisible(self._show_axes)
+
+    def _update_axes_gizmo(self) -> None:
+        """Place the XYZ gizmo at the fluid bbox origin, length ~0.5*pipe r."""
+        r = float(getattr(self, '_scene_R', 0.045)) or 0.045
+        L = 0.5 * r
+        if self._fluid_bbox is not None:
+            origin = self._fluid_bbox[0].astype(np.float64).copy()
+            origin[:] -= 1.5 * r            # sit just outside the fluid, lower-left
+        else:
+            origin = np.zeros(3)
+        dirs = (np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0]))
+        for ln, d in zip(self._axes_items, dirs):
+            seg = np.vstack([origin, origin + L * d]).astype(np.float32)
+            ln.setData(pos=seg)
+        for lb, d in zip(self._axes_labels, dirs):
+            if lb is not None:
+                lb.setData(pos=origin + L * 1.25 * d)
+        self._apply_axes_visibility()
+
+    # ── Part B: live flow-drive controls ──────────────────────────────────
+    def _sync_flow_controls(self) -> None:
+        """Detect the loaded scene's drive mode; populate + show/hide controls."""
+        sim = self.runner.backend.sim if self.runner is not None else None
+        mode = str(getattr(sim, '_body_force_mode', 'constant')).lower() if sim else 'constant'
+        has_io = getattr(sim, '_inlet_yz', None) is not None if sim else False
+
+        tangent = (mode == 'tangent')
+        # Drive magnitude (tangent scenes)
+        self._lbl_drive.setVisible(tangent)
+        self._spin_drive.setVisible(tangent)
+        if tangent:
+            self._spin_drive.blockSignals(True)
+            self._spin_drive.setValue(float(getattr(sim, '_body_force_magnitude', 2.0)))
+            self._spin_drive.blockSignals(False)
+
+        # Inlet velocity / outlet pressure (inlet/outlet scenes)
+        self._lbl_inletv.setVisible(has_io)
+        self._spin_inletv.setVisible(has_io)
+        self._lbl_outletp.setVisible(has_io)
+        self._spin_outletp.setVisible(has_io)
+        if has_io:
+            self._spin_inletv.blockSignals(True)
+            self._spin_inletv.setValue(float(getattr(sim, '_inlet_velocity', 0.0)))
+            self._spin_inletv.blockSignals(False)
+            self._spin_outletp.blockSignals(True)
+            self._spin_outletp.setValue(float(getattr(sim, '_outlet_pressure', 0.0)))
+            self._spin_outletp.blockSignals(False)
+
+        # Outlet note: shown for tangent (open) scenes, hidden for io scenes.
+        self._lbl_outlet_note.setVisible(tangent and not has_io)
+        # If neither mode applies (constant gravity), show drive disabled note.
+        if not tangent and not has_io:
+            self._lbl_drive.setVisible(True)
+            self._spin_drive.setVisible(True)
+            self._spin_drive.setEnabled(False)
+            self._lbl_drive.setText('Drive (constant g):')
+        else:
+            self._spin_drive.setEnabled(True)
+            self._lbl_drive.setText('Drive magnitude:')
+
+    def _on_drive_changed(self, v: float) -> None:
+        """Push the drive magnitude into the live sim (read each step)."""
+        if self.runner is not None:
+            sim = self.runner.backend.sim
+            if hasattr(sim, '_body_force_magnitude'):
+                sim._body_force_magnitude = float(v)
+
+    def _on_inletv_changed(self, v: float) -> None:
+        if self.runner is not None:
+            sim = self.runner.backend.sim
+            if hasattr(sim, '_inlet_velocity'):
+                sim._inlet_velocity = float(v)
+
+    def _on_outletp_changed(self, v: float) -> None:
+        if self.runner is not None:
+            sim = self.runner.backend.sim
+            if hasattr(sim, '_outlet_pressure'):
+                sim._outlet_pressure = float(v)
+
     def _on_step(self, m: dict):
         positions = np.asarray(m['positions'], dtype=np.float64)
         speeds = np.asarray(m['speeds'], dtype=np.float64)
@@ -1870,7 +2040,7 @@ class MainWindow(QMainWindow):
             m.get('velocities', np.zeros_like(positions)), dtype=np.float64)
 
         # Parts A/B/C: finite-guard + clip plane + colour map (display-only).
-        self._draw_fluid(positions, speeds, velocities)
+        self._draw_fluid(positions, speeds, velocities, m.get('p_display'))
 
         # Part C: refresh the bend velocity-arrow overlay when enabled.
         if self._chk_vectors.isChecked():
