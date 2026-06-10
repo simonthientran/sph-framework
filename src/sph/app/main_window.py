@@ -940,24 +940,25 @@ class MainWindow(QMainWindow):
         self._spin_drive.valueChanged.connect(self._on_drive_changed)
         fg.addWidget(self._spin_drive, 0, 1)
 
-        # Inlet velocity / outlet pressure (only for inlet/outlet scenes).
+        # Inlet velocity (inlet/outlet scenes) — clamped to the validated
+        # laminar range so the flow stays a developable profile, not a slug.
         self._lbl_inletv = QLabel('Inlet velocity:')
         fg.addWidget(self._lbl_inletv, 1, 0)
         self._spin_inletv = QDoubleSpinBox()
-        self._spin_inletv.setRange(0.0, 10.0)
-        self._spin_inletv.setSingleStep(0.05)
-        self._spin_inletv.setDecimals(3)
+        self._spin_inletv.setRange(0.02, 0.50)
+        self._spin_inletv.setSingleStep(0.01)
+        self._spin_inletv.setDecimals(2)
+        self._spin_inletv.setValue(0.10)
+        self._spin_inletv.setToolTip('Inlet velocity [m/s] — validated laminar range')
         self._spin_inletv.valueChanged.connect(self._on_inletv_changed)
         fg.addWidget(self._spin_inletv, 1, 1)
 
-        self._lbl_outletp = QLabel('Outlet:')
-        fg.addWidget(self._lbl_outletp, 2, 0)
-        self._spin_outletp = QDoubleSpinBox()
-        self._spin_outletp.setRange(-1e5, 1e5)
-        self._spin_outletp.setSingleStep(10.0)
-        self._spin_outletp.setDecimals(1)
-        self._spin_outletp.valueChanged.connect(self._on_outletp_changed)
-        fg.addWidget(self._spin_outletp, 2, 1)
+        # Outlet is a fixed atmosphere (p = 0) — read-only, not a control.
+        fg.addWidget(QLabel('Outlet:'), 2, 0)
+        self._lbl_outlet_bc = QLabel('Atmosphere (p = 0)')
+        self._lbl_outlet_bc.setStyleSheet(
+            f'color: {PALETTE["dark"]["text_mid"]}; font-size: 10px;')
+        fg.addWidget(self._lbl_outlet_bc, 2, 1)
 
         # Read-only note for tangent-driven (open outlet) scenes.
         self._lbl_outlet_note = QLabel('open (tangent-driven)')
@@ -1989,18 +1990,15 @@ class MainWindow(QMainWindow):
             self._spin_drive.setValue(float(getattr(sim, '_body_force_magnitude', 2.0)))
             self._spin_drive.blockSignals(False)
 
-        # Inlet velocity / outlet pressure (inlet/outlet scenes)
+        # Inlet velocity (inlet/outlet scenes); outlet = read-only atmosphere
         self._lbl_inletv.setVisible(has_io)
         self._spin_inletv.setVisible(has_io)
-        self._lbl_outletp.setVisible(has_io)
-        self._spin_outletp.setVisible(has_io)
+        self._lbl_outlet_bc.setVisible(has_io)
         if has_io:
             self._spin_inletv.blockSignals(True)
-            self._spin_inletv.setValue(float(getattr(sim, '_inlet_velocity', 0.0)))
+            iv = float(getattr(sim, '_inlet_velocity', 0.10))
+            self._spin_inletv.setValue(min(max(iv, 0.02), 0.50))
             self._spin_inletv.blockSignals(False)
-            self._spin_outletp.blockSignals(True)
-            self._spin_outletp.setValue(float(getattr(sim, '_outlet_pressure', 0.0)))
-            self._spin_outletp.blockSignals(False)
 
         # Outlet note: shown for tangent (open) scenes, hidden for io scenes.
         self._lbl_outlet_note.setVisible(tangent and not has_io)
@@ -2026,12 +2024,6 @@ class MainWindow(QMainWindow):
             sim = self.runner.backend.sim
             if hasattr(sim, '_inlet_velocity'):
                 sim._inlet_velocity = float(v)
-
-    def _on_outletp_changed(self, v: float) -> None:
-        if self.runner is not None:
-            sim = self.runner.backend.sim
-            if hasattr(sim, '_outlet_pressure'):
-                sim._outlet_pressure = float(v)
 
     def _on_step(self, m: dict):
         positions = np.asarray(m['positions'], dtype=np.float64)
