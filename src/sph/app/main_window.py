@@ -898,7 +898,7 @@ class MainWindow(QMainWindow):
 
         # Honest note shown only in Pressure mode.
         self._lbl_pressure_note = QLabel(
-            'Relative pressure — qualitative (WCSPH).\nVelocity is quantitatively validated.')
+            'Relative pressure — qualitative (WCSPH);\nvelocity is quantitatively validated.')
         self._lbl_pressure_note.setWordWrap(True)
         self._lbl_pressure_note.setStyleSheet(
             f'color: {PALETTE["dark"]["warning"]}; font-size: 9px;')
@@ -1428,7 +1428,7 @@ class MainWindow(QMainWindow):
     def _color_by_label(self) -> str:
         """Title (field + unit) for the active Color-by mode."""
         return {
-            'Speed': 'Speed [m/s]',
+            'Speed': 'Velocity magnitude [m/s]',
             'Secondary': 'Secondary [m/s]',
             'Density error': 'ρ error',
             'Pressure': 'Pressure (relative, qualitative) [Pa]',
@@ -1897,6 +1897,8 @@ class MainWindow(QMainWindow):
             mode = self._combo_color.currentText()
             if mode == 'Pressure' and p_display is not None:
                 colors = self._pressure_colors(positions, p_display)
+            elif mode == 'Speed':
+                colors = self._velocity_colors(positions, speeds)
             else:
                 values = None
                 if mode == 'Secondary':
@@ -1907,11 +1909,33 @@ class MainWindow(QMainWindow):
                 size=self._particle_size_world())
         self._update_colorbar_labels()
 
+    def _velocity_colors(self, positions: np.ndarray, speeds: np.ndarray) -> np.ndarray:
+        """Part A: reference-CFD velocity look. Scale = [0, 99th-pct of INTERIOR
+        speeds] (wall-deficient particles excluded from the max so transient
+        outliers don't wash out the field), full blue→red colormap (Turbo
+        default). All particles coloured on that scale."""
+        n = len(speeds)
+        counts = self._neighbor_counts(positions)
+        med = float(np.median(counts)) if n else 1.0
+        interior = counts >= 0.6 * max(med, 1.0)
+        s_int = speeds[interior] if interior.any() else speeds
+        s_int = s_int[np.isfinite(s_int)]
+        vmax = float(np.percentile(s_int, 99)) if s_int.size else 1.0
+        vmax = max(vmax, 1e-9)
+        self._colorbar_vmin = 0.0
+        self._colorbar_vmax = vmax
+        t = np.clip(np.nan_to_num(speeds) / vmax, 0.0, 1.0)
+        fn = _CMAP_FNS.get(self._combo_colormap.currentText(), _turbo)
+        r, g, b = fn(t)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, 0] = r; colors[:, 1] = g; colors[:, 2] = b; colors[:, 3] = 0.95
+        return colors
+
     def _neighbor_counts(self, positions: np.ndarray) -> np.ndarray:
         """Per-fluid-particle FLUID-neighbour count within the support radius.
         Fluid-only (boundary excluded) so wall-adjacent particles — which have
         fluid on one side only — show a genuinely low count and are detected as
-        kernel-deficient. Computed only in Pressure mode (cost paid on demand)."""
+        kernel-deficient. Computed in Pressure/Speed modes (cost paid on demand)."""
         try:
             from scipy.spatial import cKDTree
         except Exception:
@@ -2073,12 +2097,13 @@ class MainWindow(QMainWindow):
                 it.setVisible(self._show_axes)
 
     def _update_axes_gizmo(self) -> None:
-        """Place the XYZ gizmo at the fluid bbox origin, length ~0.5*pipe r."""
+        """Small XYZ gizmo in the lower-left corner, pushed clear of the
+        inlet/outlet rings (which span centreline ± r)."""
         r = float(getattr(self, '_scene_R', 0.045)) or 0.045
-        L = 0.5 * r
+        L = 0.4 * r                         # subtle, short axes
         if self._fluid_bbox is not None:
             origin = self._fluid_bbox[0].astype(np.float64).copy()
-            origin[:] -= 1.5 * r            # sit just outside the fluid, lower-left
+            origin[:] -= 2.2 * r            # > r clear of any inlet/outlet ring
         else:
             origin = np.zeros(3)
         dirs = (np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0]))
