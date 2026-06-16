@@ -9,7 +9,7 @@ This repository implements a modular Smoothed Particle Hydrodynamics (SPH) frame
 - **Extensibility towards modern incompressible SPH solvers (IISPH, DFSPH)**
 - **Clean software architecture for research and HPC extensions**
 
-The long-term goal is to evolve this project towards a **research-grade SPH simulation framework comparable in structure (not scale) to SPlisHSPlasH**, with emphasis on:
+The long-term goal is to evolve this project towards a **research-grade SPH simulation framework, with emphasis on:
 
 - correctness
 - reproducibility
@@ -263,7 +263,6 @@ Monaghan, J. J. (1992) — SPH fundamentals
 Ihmsen et al. (2014) — SPH tutorial
 Price (2012) — Astrophysical SPH
 Müller et al. (2003) — Particle-based fluids
-SPlisHSPlasH (open-source reference implementation)
 Vision
 
 This project is intended to evolve into:
